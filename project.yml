@@ -1,0 +1,69 @@
+# XcodeGen spec. Run `xcodegen generate` to create Nilo.xcodeproj.
+# Nilo.xcodeproj is generated: never edit it by hand, edit this file.
+name: Nilo
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "26.0"
+    iOS: "26.0"
+settings:
+  base:
+    NILO_BUNDLE_ID_PREFIX: com.CHANGE-ME  # set once, e.g. com.yourstudio
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""                 # pick your team in Xcode once, or set it here
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+packages:
+  NiloKit:
+    path: Packages/NiloKit
+
+targets:
+  Nilo-macOS:
+    type: application
+    platform: macOS
+    sources: [Apps/macOS]
+    dependencies:
+      - package: NiloKit
+        product: NiloCore
+      - package: NiloKit
+        product: NiloUI
+    info:
+      path: Apps/macOS/Info.plist
+      properties:
+        CFBundleDisplayName: Nilo
+        LSUIElement: true                # menu bar app, no Dock icon
+        NSMicrophoneUsageDescription: Nilo listens when you call it, so it can hear what you ask.
+    entitlements:
+      path: Apps/macOS/Nilo.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.device.audio-input: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(NILO_BUNDLE_ID_PREFIX).nilo
+        PRODUCT_NAME: Nilo
+
+  Nilo-iOS:
+    type: application
+    platform: iOS
+    sources: [Apps/iOS]
+    dependencies:
+      - package: NiloKit
+        product: NiloCore
+      - package: NiloKit
+        product: NiloUI
+    info:
+      path: Apps/iOS/Info.plist
+      properties:
+        CFBundleDisplayName: Nilo
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSMicrophoneUsageDescription: Nilo listens when you call it, so it can hear what you ask.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(NILO_BUNDLE_ID_PREFIX).nilo
+        PRODUCT_NAME: Nilo
+        TARGETED_DEVICE_FAMILY: "1,2"
