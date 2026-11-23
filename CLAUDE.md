@@ -85,5 +85,8 @@ Short sentences, plain words, lead with the result. "Done. Thursday's clear afte
 - [ ] 5. Files: Spotlight, iCloud links; job 4
 - [ ] 6. Mac TestFlight
 - [ ] 7. iPhone app into the same beta
+- [ ] 8. Safari Web Extension and share extension, inside the Nilo app (Mac and iPhone)
 
-Target: Mac TestFlight in the week of 5 April 2027, iPhone in the week of 17 May 2027.
+Target: Mac TestFlight in the week of 5 April 2027, iPhone in the week of 17 May 2027, Safari and share sheet by early June 2027.
+
+Not now: a standalone Nilo browser. Revisit only if people use Nilo most while browsing.
