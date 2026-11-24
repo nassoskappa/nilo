@@ -7,7 +7,7 @@ A native assistant for Mac, iPhone and iPad that finishes whole jobs across your
 ## First run on your Mac
 
 1. Install XcodeGen once: `brew install xcodegen`
-2. In `project.yml`, set `NILO_BUNDLE_ID_PREFIX` to your own reverse domain (for example `com.yourstudio`).
+2. The app ID prefix in `project.yml` is `com.bitniks`. Change `NILO_BUNDLE_ID_PREFIX` only if you move it to another developer account.
 3. Generate the project: `xcodegen generate`
 4. Open it: `open Nilo.xcodeproj`
 5. In Xcode, select each target, open Signing & Capabilities, and pick your team.
