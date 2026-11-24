@@ -59,9 +59,43 @@ Platforms: macOS 26, iOS 26 and later, Swift 6 with strict concurrency, SwiftUI 
 
 - **Colour.** Signature cyan `#4EF2E5`, "needs you" tint `#A6FAF3`, light mode `#00807A`, text on cyan `#041413`. Bright cyan only ever touches black. On glass or light surfaces the mark sits in a black capsule; buttons and links use `#00807A`. Where Apple sets the tint (menu bar, tinted icons, Lock Screen widgets) the mark is monochrome. Use `NiloColor`, never raw hex in views.
 - **The mark.** A small cursor bar with seven states: idle, listening, thinking, working, needs you, done, noted. Motion carries the state; colour never changes hue. Use `MarkView`.
+- **The character.** See "Character and motion" below. The mark is a ring of light: side-on it reads as the cursor, face-on it is a ring.
 - **Type.** SF Pro for everything people read, approve or tap, with Dynamic Type. SF Mono (`NiloFont.mono`) only for state labels, counters, timestamps and the wordmark.
 - **Icons.** SF Symbols, and only where removing the icon would make something harder to find or understand.
 - **Accessibility.** Every control is a real button with a label. VoiceOver reads the mark's state. Sounds and haptics match each state.
+
+## Character and motion
+
+The mark is a torus (a ring of light). Side-on, it looks like the cursor. Face-on, it is a ring. The design canvas board "Face" shows the reference motion.
+
+**The rule.** Side-on means Nilo faces the task. Face-on means Nilo faces you. Nilo turns only when attention moves between the person and the work.
+
+| State | Shape | Motion |
+|---|---|---|
+| idle | side-on | slow breath (scale about 1.06 x 0.96, 3.2 s loop) |
+| listening | turns face-on | stays face-on while the person speaks or types |
+| thinking | side-on | breathe (2.2 s) |
+| working | side-on | progress moves along the cursor edge. Never a spinning ring |
+| needs you | turns face-on | plain ring, calm. No blink, no smile |
+| done | turns face-on | blink, then smile if the job went well, then turns back side-on |
+| noted | side-on | quick quarter turn and back (a glance) |
+
+**Blink.** The ring closes flat: scaleY from 1 to 0.08 and back. Close in about 80 ms, open in about 120 ms. Means "got it".
+
+**Smile.** The top of the ring dims to about 16 % opacity. The bottom stays at full brightness, as an arc with round ends (stroke line cap round), about 150 degrees wide. In 300 ms, hold 500 ms, out 350 ms. The whole ring stays visible. Never switch the top off, never draw a face, never use cheeks or a crescent. Only after a job that went well.
+
+**Timing.** A turn in the UI takes 300 to 350 ms with ease-in-out. The slow, cinematic turn (about 1 s) is used only once: the first launch hello. A full turn-blink-smile sequence happens at most once per request.
+
+**Never:**
+- No blink, smile or playfulness during an approval (send, change, delete). Approvals are for trust.
+- The ring never stares. When face-on with no input, it does something small or turns back within 2 s.
+- The ring never follows the pointer or the person's face.
+- No eyes, mouth or wink in the product. The literal face and the wink are for marketing film only.
+- Respect Reduce Motion: replace turns with a cross-fade, and keep blink and smile as short opacity changes.
+
+**Rendering.** In the app the mark is flat (SwiftUI shapes, no 3D). Fake the turn with a horizontal scale of the ring plus a width change, so side-on it becomes the cursor bar. The glossy 3D character is for the app icon, the website and film, made by a 3D artist (Blender or Spline, and Icon Composer layers for the icon).
+
+**Sound (AirPods, HomePod, no screen).** The turn is two soft notes: rising when Nilo turns to you, falling when it goes back to work.
 
 ## Voice
 
