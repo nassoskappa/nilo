@@ -7,14 +7,19 @@ import NiloUI
 /// Phase 1 replaces the menu with a panel attached to the notch.
 @main
 struct NiloApp: App {
-    @State private var state: MarkState = .idle
+    /// Owns the current state and moves the menu bar icon. The panel reads and sets it.
+    @State private var bar = MenuBarMark()
 
     var body: some Scene {
         MenuBarExtra {
-            StatePicker(state: $state)
+            StatePicker(
+                state: Binding(get: { bar.state }, set: { bar.set($0) }),
+                replay: bar.replay,
+                onReplay: { bar.replayNow() }
+            )
         } label: {
-            // Monochrome template: a bar when Nilo faces the task, a ring when it faces you.
-            Image(nsImage: MenuBarIcon.image(for: state))
+            // Monochrome template, moving with the same motion as the panel.
+            Image(nsImage: bar.image)
         }
         .menuBarExtraStyle(.window)
     }
@@ -22,8 +27,8 @@ struct NiloApp: App {
 
 private struct StatePicker: View {
     @Binding var state: MarkState
-    /// Bumped by "Play again" so the current state's motion restarts.
-    @State private var replay = 0
+    var replay: Int
+    var onReplay: () -> Void
 
     var body: some View {
         VStack(spacing: 20) {
@@ -43,7 +48,7 @@ private struct StatePicker: View {
                     .keyboardShortcut(.space, modifiers: [])
             }
 
-            Button("Play again") { replay += 1 }
+            Button("Play again", action: onReplay)
 
             Divider()
             Button("Quit Nilo") { NSApplication.shared.terminate(nil) }

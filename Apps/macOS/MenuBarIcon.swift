@@ -1,60 +1,87 @@
 import AppKit
+import SwiftUI
 import NiloUI
 
-/// Nilo's menu bar icon.
+/// Nilo's menu bar icon, and the clock that moves it.
 ///
-/// Drawn in code as a template image, so macOS tints it black or white to
-/// match the menu bar (brand rule: where Apple sets the tint, the mark is
-/// monochrome).
+/// The icon is the same character as the panel, drawn from the same motion (`MarkMotion`), so
+/// the two always agree. It is a template image: macOS tints it black or white to match the
+/// menu bar (brand rule: where Apple sets the tint, the mark is monochrome). So there is no
+/// cyan and no glow here. Motion carries the state.
 ///
-/// It uses the character's two shapes (see "Character and motion" in CLAUDE.md):
-/// - side-on, a short rounded bar: Nilo faces the task
-/// - face-on, a small ring: Nilo faces you
-///
-/// The shapes swap with no animation. Apple discourages moving menu bar icons,
-/// and the animated turn belongs in the panel.
-enum MenuBarIcon {
-    static func image(for state: MarkState) -> NSImage {
-        let showRing = facesYou(state)
-        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
-            NSColor.black.set()
-            if showRing {
-                // The ring: 12 pt across, 2.6 pt line.
-                let diameter: CGFloat = 12
-                let line: CGFloat = 2.6
-                let ringRect = NSRect(
-                    x: (rect.width - diameter) / 2,
-                    y: (rect.height - diameter) / 2,
-                    width: diameter,
-                    height: diameter
-                ).insetBy(dx: line / 2, dy: line / 2)
-                let ring = NSBezierPath(ovalIn: ringRect)
-                ring.lineWidth = line
-                ring.stroke()
-            } else {
-                // The cursor: 3.6 pt wide, 14 pt tall, fully rounded ends.
-                let width: CGFloat = 3.6
-                let height: CGFloat = 14
-                let barRect = NSRect(
-                    x: (rect.width - width) / 2,
-                    y: (rect.height - height) / 2,
-                    width: width,
-                    height: height
-                )
-                NSBezierPath(roundedRect: barRect, xRadius: width / 2, yRadius: width / 2).fill()
+/// Rules (see "Character and motion" in CLAUDE.md):
+/// - Idle is completely still.
+/// - The icon only redraws while something is moving, about 30 times a second.
+/// - With Reduce Motion it cross-fades and never loops.
+@MainActor
+@Observable
+final class MenuBarMark {
+    private(set) var state: MarkState = .idle
+    /// Bumped by "Play again". Both the panel and the icon restart when it changes.
+    private(set) var replay = 0
+    private(set) var image: NSImage
+
+    private var motion: MarkMotion
+    private var loop: Task<Void, Never>?
+
+    private let size = CGFloat(18)
+    private let markHeight = CGFloat(14)
+
+    init() {
+        motion = MarkMotion(state: .idle, profile: .menuBar, reduceMotion: false)
+        image = NSImage()
+        image = render(motion.frame(at: motion.settledDate), state: .idle, reduceMotion: false)
+    }
+
+    func set(_ newState: MarkState) {
+        guard newState != state else { return }
+        state = newState
+        begin(snap: false)
+    }
+
+    func replayNow() {
+        replay += 1
+        begin(snap: true)
+    }
+
+    private func begin(snap: Bool) {
+        let now = Date()
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let from = snap ? 0 : motion.frame(at: now).turn
+        motion = MarkMotion(state: state, profile: .menuBar, reduceMotion: reduce, start: now, fromTurn: from)
+        run(reduceMotion: reduce)
+    }
+
+    /// Redraw about 30 times a second while moving, then once more at rest, then stop.
+    private func run(reduceMotion: Bool) {
+        loop?.cancel()
+        loop = Task { [weak self] in
+            while let self, !Task.isCancelled {
+                let now = Date()
+                let moving = self.motion.isLooping
+                    || now.timeIntervalSince(self.motion.start) < self.motion.settleDuration
+                let frame = self.motion.frame(at: moving ? now : self.motion.settledDate)
+                self.image = self.render(frame, state: self.state, reduceMotion: reduceMotion)
+                guard moving else { break }
+                try? await Task.sleep(for: .milliseconds(33))
             }
-            return true
         }
+    }
+
+    private func render(_ frame: MarkFrame, state: MarkState, reduceMotion: Bool) -> NSImage {
+        let view = MarkFrameView(
+            frame: frame,
+            height: markHeight,
+            color: .black,
+            glow: false,
+            reduceMotion: reduceMotion,
+            canvas: CGSize(width: size, height: size)
+        )
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
+        let image = renderer.nsImage ?? NSImage(size: NSSize(width: size, height: size))
         image.isTemplate = true
         image.accessibilityDescription = "Nilo, \(state.label)"
         return image
-    }
-
-    /// Face-on when attention is on the person: listening, needs you, done.
-    static func facesYou(_ state: MarkState) -> Bool {
-        switch state {
-        case .listening, .needsYou, .done: true
-        case .idle, .thinking, .working, .noted: false
-        }
     }
 }

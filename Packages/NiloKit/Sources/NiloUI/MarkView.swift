@@ -57,123 +57,57 @@ struct RingShape: Shape {
     }
 }
 
-// MARK: - The mark
+// MARK: - Drawing one frame
 
-/// Nilo's character: a ring of light. Side-on it reads as the cursor, face-on it is a ring.
-/// Side-on means Nilo faces the task. Face-on means Nilo faces you.
-public struct MarkView: View {
-    public var state: MarkState
-    /// Microphone level, 0...1. Swells the ring while listening.
-    public var level: Double
-    /// Height of the mark in points. Everything scales from it.
-    public var height: CGFloat
-    /// Change this number to replay the current state's motion from the start.
-    public var replay: Int
+/// Draws a single frame of the mark. No clock inside: whoever owns the time passes a frame in.
+/// The panel uses it inside a `TimelineView`; the menu bar renders it to a template image.
+public struct MarkFrameView: View {
+    var frame: MarkFrame
+    var height: CGFloat
+    var color: Color
+    var glow: Bool
+    var reduceMotion: Bool
+    var swell: CGFloat
+    var canvas: CGSize
 
-    public init(state: MarkState, level: Double = 0, height: CGFloat = 34, replay: Int = 0) {
-        self.state = state
-        self.level = level
+    public init(
+        frame: MarkFrame,
+        height: CGFloat,
+        color: Color,
+        glow: Bool = true,
+        reduceMotion: Bool = false,
+        swell: CGFloat = 1,
+        canvas: CGSize? = nil
+    ) {
+        self.frame = frame
         self.height = height
-        self.replay = replay
-    }
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// 0 = side-on, 1 = face-on.
-    @State private var turn: CGFloat = 0
-    /// Vertical scale of the blink. 1 = open, 0.08 = closed.
-    @State private var blink: CGFloat = 1
-    /// 0 = no smile, 1 = full smile.
-    @State private var smile: Double = 0
-    /// Start of the current loop, so a breath begins at rest.
-    @State private var epoch = Date()
-    @State private var lastReplay = 0
-
-    private struct PlayKey: Equatable {
-        var state: MarkState
-        var replay: Int
-    }
-
-    /// The slow, looping life of a state: size, glow and brightness over time.
-    private struct Pulse {
-        var sx: CGFloat = 1
-        var sy: CGFloat = 1
-        var glow: CGFloat = 1
-        var opacity: Double = 1
-    }
-
-    /// States that loop need the clock. Reduce Motion stops all loops.
-    private var loops: Bool {
-        guard !reduceMotion else { return false }
-        switch state {
-        case .idle, .thinking, .working, .listening, .needsYou: return true
-        case .noted, .done: return false
-        }
-    }
-
-    private func pulse(at t: TimeInterval) -> Pulse {
-        guard loops else { return Pulse() }
-        switch state {
-        case .idle:
-            // Slow breath, full brightness. The bar widens and the glow swells.
-            let b = CGFloat(breathe(t, period: 3.2))
-            return Pulse(sx: 1 + 0.35 * b, sy: 1 - 0.06 * b, glow: 1 + 0.5 * b)
-        case .thinking:
-            // Quicker and deeper than idle, with a soft brightness pulse. Never below 70 %.
-            let b = CGFloat(breathe(t, period: 2.2))
-            return Pulse(sx: 1 + 0.6 * b, sy: 1 - 0.08 * b, glow: 1 + 0.3 * b, opacity: 0.7 + 0.3 * Double(b))
-        case .listening:
-            // Waiting for you: a slow pulse of size and glow, on top of the voice swell.
-            let b = CGFloat(breathe(t, period: 1.8))
-            return Pulse(sx: 1 + 0.07 * b, sy: 1 + 0.07 * b, glow: 1 + 0.6 * b)
-        case .needsYou:
-            // Calm: the ring slowly resizes. No break, no glow change.
-            let b = CGFloat(breathe(t, period: 3.4))
-            return Pulse(sx: 1 + 0.10 * b, sy: 1 + 0.10 * b)
-        default:
-            return Pulse()
-        }
-    }
-
-    private var color: Color {
-        state == .needsYou ? NiloColor.needsYou : NiloColor.signature
+        self.color = color
+        self.glow = glow
+        self.reduceMotion = reduceMotion
+        self.swell = swell
+        self.canvas = canvas ?? CGSize(width: height * 2.4, height: height * 1.4)
     }
 
     public var body: some View {
-        TimelineView(.animation(paused: !loops)) { timeline in
-            ring(at: timeline.date.timeIntervalSince(epoch))
-        }
-        .frame(width: height * 2.4, height: height * 1.4)
-        .animation(.easeInOut(duration: 0.33), value: state)
-        .task(id: PlayKey(state: state, replay: replay)) { await play() }
-        .accessibilityElement()
-        .accessibilityLabel("Nilo")
-        .accessibilityValue(state.label)
-    }
+        let working = frame.sweep != nil
+        let blinkNorm = (frame.blink - 0.08) / 0.92
 
-    // MARK: Drawing
-
-    private func ring(at t: TimeInterval) -> some View {
-        let p = pulse(at: t)
-        let working = state == .working
-        let blinkNorm = (blink - 0.08) / 0.92
-        let swell = state == .listening ? 1 + 0.18 * CGFloat(min(max(level, 0), 1)) : 1
-
-        return ZStack {
-            layers(smile: smile)
+        ZStack {
+            layers(smile: frame.smile)
                 .opacity(working ? 0.35 : 1)
-            if working {
+            if let travel = frame.sweep {
                 layers(smile: 0)
-                    .mask(sweep(at: t))
+                    .mask(sweep(travel))
             }
         }
         .scaleEffect(swell)
-        .animation(.easeOut(duration: 0.1), value: level)
-        .scaleEffect(x: p.sx, y: p.sy)
+        .scaleEffect(x: frame.sx, y: frame.sy)
         // Blink: the ring closes flat. With Reduce Motion it dips in brightness instead.
-        .scaleEffect(y: reduceMotion ? 1 : blink)
-        .opacity(reduceMotion ? 0.3 + 0.7 * Double(blinkNorm) : p.opacity)
-        .shadow(color: NiloColor.signature.opacity(0.7), radius: height * 0.28 * p.glow)
+        .scaleEffect(y: reduceMotion ? 1 : frame.blink)
+        .offset(y: -frame.hop * height)
+        .opacity(reduceMotion ? 0.3 + 0.7 * blinkNorm : frame.opacity)
+        .shadow(color: glow ? NiloColor.signature.opacity(0.7) : .clear, radius: height * 0.28 * frame.glow)
+        .frame(width: canvas.width, height: canvas.height)
     }
 
     /// The ring itself, plus the smile arc when there is one.
@@ -201,96 +135,89 @@ public struct MarkView: View {
         if reduceMotion {
             // Cross-fade between the two shapes instead of turning.
             ZStack {
-                RingShape(turn: 0, height: height).fill(color, style: FillStyle(eoFill: true)).opacity(1 - turn)
-                RingShape(turn: 1, height: height).fill(color, style: FillStyle(eoFill: true)).opacity(turn)
+                RingShape(turn: 0, height: height).fill(color, style: FillStyle(eoFill: true)).opacity(1 - frame.turn)
+                RingShape(turn: 1, height: height).fill(color, style: FillStyle(eoFill: true)).opacity(frame.turn)
             }
         } else {
-            RingShape(turn: turn, height: height).fill(color, style: FillStyle(eoFill: true))
+            RingShape(turn: CGFloat(frame.turn), height: height).fill(color, style: FillStyle(eoFill: true))
         }
     }
 
     /// Working: a bright stretch of the cursor, moving along its edge.
-    private func sweep(at t: TimeInterval) -> some View {
-        let travel = CGFloat((sin(t / 1.6 * 2 * .pi - .pi / 2) + 1) / 2)
-        return Rectangle()
+    private func sweep(_ travel: Double) -> some View {
+        Rectangle()
             .fill(LinearGradient(colors: [.clear, .black, .clear], startPoint: .top, endPoint: .bottom))
             .frame(width: height, height: height * 0.55)
-            .offset(y: (travel - 0.5) * height * 0.85)
+            .offset(y: CGFloat(travel - 0.5) * height * 0.85)
             .frame(width: height, height: height)
     }
+}
 
-    /// Smooth 0...1...0 over a period, starting at rest.
-    private func breathe(_ t: TimeInterval, period: Double) -> Double {
-        let p = t.truncatingRemainder(dividingBy: period) / period
-        return (sin(p * 2 * .pi - .pi / 2) + 1) / 2
+// MARK: - The mark
+
+/// Nilo's character: a ring of light. Side-on it reads as the cursor, face-on it is a ring.
+/// Side-on means Nilo faces the task. Face-on means Nilo faces you.
+public struct MarkView: View {
+    public var state: MarkState
+    /// Microphone level, 0...1. Swells the ring while listening.
+    public var level: Double
+    /// Height of the mark in points. Everything scales from it.
+    public var height: CGFloat
+    /// Change this number to replay the current state's motion from the start.
+    public var replay: Int
+
+    public init(state: MarkState, level: Double = 0, height: CGFloat = 34, replay: Int = 0) {
+        self.state = state
+        self.level = level
+        self.height = height
+        self.replay = replay
+        _motion = State(initialValue: MarkMotion(state: state, profile: .panel, reduceMotion: false))
     }
 
-    // MARK: Sequencing
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var motion: MarkMotion
+    /// False once a one-off motion has finished, so the view stops redrawing.
+    @State private var running = true
 
-    /// Plays the motion for the current state. SwiftUI cancels it when the state changes.
-    private func play() async {
-        epoch = Date()
-        if replay != lastReplay {
-            lastReplay = replay
-            var tx = Transaction()
-            tx.disablesAnimations = true
-            withTransaction(tx) {
-                turn = 0
-                blink = 1
-                smile = 0
-            }
+    private var color: Color {
+        state == .needsYou ? NiloColor.needsYou : NiloColor.signature
+    }
+
+    public var body: some View {
+        TimelineView(.animation(paused: !running)) { timeline in
+            MarkFrameView(
+                frame: motion.frame(at: running ? timeline.date : motion.settledDate),
+                height: height,
+                color: color,
+                reduceMotion: reduceMotion,
+                swell: state == .listening ? 1 + 0.18 * CGFloat(min(max(level, 0), 1)) : 1
+            )
         }
-        if smile != 0 || blink != 1 {
-            withAnimation(.easeOut(duration: 0.15)) {
-                smile = 0
-                blink = 1
-            }
-        }
-
-        switch state {
-        case .idle, .thinking, .working:
-            _ = await step(turnTime) { turn = 0 }
-        case .listening, .needsYou:
-            _ = await step(turnTime) { turn = 1 }
-        case .noted:
-            guard await step(turnTime, { turn = 0 }) else { return }
-            // A glance: a quarter turn and back.
-            guard await step(0.14, { turn = 0.5 }) else { return }
-            _ = await step(0.18) { turn = 0 }
-        case .done:
-            await playDone()
-        }
+        .animation(.easeOut(duration: 0.1), value: level)
+        .onAppear { if motion.reduceMotion != reduceMotion { restart(snap: false) } }
+        .onChange(of: state) { restart(snap: false) }
+        .onChange(of: replay) { restart(snap: true) }
+        .onChange(of: reduceMotion) { restart(snap: false) }
+        .task(id: motion.start) { await settle() }
+        .accessibilityElement()
+        .accessibilityLabel("Nilo")
+        .accessibilityValue(state.label)
     }
 
-    /// Done, once: turn to the person, blink, smile, turn back and rest.
-    private func playDone() async {
-        guard await step(turnTime, { turn = 1 }) else { return }
-        guard await pause(0.12) else { return }
-        // Blink: close in 80 ms, open in 120 ms.
-        guard await step(0.08, { blink = 0.08 }) else { return }
-        guard await step(0.12, { blink = 1 }) else { return }
-        guard await pause(0.1) else { return }
-        // Smile: in 300 ms, hold 500 ms, out 350 ms.
-        guard await step(0.3, { smile = 1 }) else { return }
-        guard await pause(0.5) else { return }
-        guard await step(0.35, { smile = 0 }) else { return }
-        guard await pause(0.1) else { return }
-        _ = await step(turnTime) { turn = 0 }
+    /// Begin the current state's motion. A turn carries on from where the ring is now.
+    private func restart(snap: Bool) {
+        let now = Date()
+        let from = snap ? 0 : motion.frame(at: now).turn
+        motion = MarkMotion(state: state, profile: .panel, reduceMotion: reduceMotion, start: now, fromTurn: from)
+        running = true
     }
 
-    /// 330 ms with ease-in-out. Shorter when Reduce Motion cross-fades.
-    private var turnTime: Double { reduceMotion ? 0.2 : 0.33 }
-
-    /// Animates a change and waits for it. Returns false if the state changed meanwhile.
-    private func step(_ seconds: Double, _ change: () -> Void) async -> Bool {
-        withAnimation(.easeInOut(duration: seconds)) { change() }
-        try? await Task.sleep(for: .seconds(seconds))
-        return !Task.isCancelled
-    }
-
-    private func pause(_ seconds: Double) async -> Bool {
-        try? await Task.sleep(for: .seconds(seconds))
-        return !Task.isCancelled
+    /// Stop redrawing once a motion that ends has ended.
+    private func settle() async {
+        running = true
+        guard !motion.isLooping else { return }
+        try? await Task.sleep(for: .seconds(motion.settleDuration + 0.05))
+        if !Task.isCancelled { running = false }
     }
 }
 

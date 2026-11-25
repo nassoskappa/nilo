@@ -77,9 +77,19 @@ The mark is a torus (a ring of light). Side-on, it looks like the cursor. Face-o
 | listening | turns face-on | stays face-on while the person speaks or types; slow pulse (1.8 s) plus a swell with voice level |
 | thinking | side-on | deeper, quicker breath (width +60 %, 2.2 s) with a soft brightness pulse, never below 70 % |
 | working | side-on | progress moves along the cursor edge. Never a spinning ring |
-| needs you | turns face-on | calm ring that slowly resizes (+10 %, 3.4 s). No blink, no smile, no hop |
+| needs you | turns face-on | turns, one small hop on arrival (16 % of its height, 360 ms), then a perfectly still ring. No blink, no smile, no loop |
 | done | turns face-on | blink, then smile if the job went well, then turns back side-on |
 | noted | side-on | quick quarter turn and back (a glance) |
+
+**Menu bar and panel share one motion.** The menu bar icon and the panel (and later the notch panel) draw from the same `MarkMotion` in NiloUI, so they never disagree. Tune numbers there, once.
+
+**Menu bar rules.**
+- One colour, tinted by macOS. No cyan, no glow. Motion carries the state.
+- Idle is completely still. Nothing redraws.
+- Working, thinking and listening move all the time. Needs you hops once and holds still. Done plays turn, blink, smile, turn back once, then rests as a bar. Noted is one glance.
+- Loops move 1.5 times as far as in the panel, because the icon is only 18 pt.
+- The icon redraws about 30 times a second only while something moves, then stops.
+- Reduce Motion: cross-fade, no loops, no hop.
 
 **Blink.** The ring closes flat: scaleY from 1 to 0.08 and back. Close in about 80 ms, open in about 120 ms. Means "got it".
 
@@ -89,7 +99,7 @@ The mark is a torus (a ring of light). Side-on, it looks like the cursor. Face-o
 
 **Never:**
 - No blink, smile or playfulness during an approval (send, change, delete). Approvals are for trust.
-- The ring never stares. When face-on with no input, it does something small or turns back within 2 s.
+- The ring never stares. When face-on with no input, it does something small or turns back within 2 s. The one exception is needs you: it hops once on arrival, then holds still, because it is waiting for a decision and must not keep moving.
 - The ring never follows the pointer or the person's face.
 - No eyes, mouth or wink in the product. The literal face and the wink are for marketing film only.
 - Respect Reduce Motion: replace turns with a cross-fade, and keep blink and smile as short opacity changes.
