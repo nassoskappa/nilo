@@ -25,7 +25,8 @@ struct VoiceActivityTests {
         #expect(VoiceActivity.loudness(rms: 0.001) == 0)  // -60 dB, below the floor
         #expect(VoiceActivity.loudness(rms: 1) == 1)      // 0 dB, above the ceiling
         let mid = VoiceActivity.loudness(rms: 0.01)       // -40 dB
-        #expect(mid > 0.2 && mid < 0.3)
+        #expect(mid > 0.35 && mid < 0.5)
+        #expect(VoiceActivity.loudness(rms: 0.1) == 1)    // -20 dB, ordinary speech fills it
     }
 
     @Test func silenceAloneNeverEnds() {

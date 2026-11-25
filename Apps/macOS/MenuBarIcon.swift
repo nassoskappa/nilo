@@ -73,7 +73,7 @@ final class MenuBarMark {
                 let moving = self.motion.isLooping
                     || now.timeIntervalSince(self.motion.start) < self.motion.settleDuration
                 let frame = self.motion.frame(at: moving ? now : self.motion.settledDate)
-                let swell = self.state == .listening && !reduceMotion ? 1 + 0.12 * min(max(self.level, 0), 1) : 1
+                let swell = self.state == .listening && !reduceMotion ? 1 + 0.25 * min(max(self.level, 0), 1) : 1
                 self.image = self.render(frame, state: self.state, reduceMotion: reduceMotion, swell: swell)
                 self.onImage?(self.image)
                 guard moving else { break }

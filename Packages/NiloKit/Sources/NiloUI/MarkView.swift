@@ -194,10 +194,10 @@ public struct MarkView: View {
                 height: height,
                 color: color,
                 reduceMotion: reduceMotion,
-                swell: state == .listening && !reduceMotion ? 1 + 0.18 * voice : 1
+                swell: state == .listening && !reduceMotion ? 1 + 0.35 * voice : 1
             )
             // Reduce Motion: the voice brightens the ring instead of swelling it.
-            .brightness(state == .listening && reduceMotion ? 0.3 * voice : 0)
+            .brightness(state == .listening && reduceMotion ? 0.45 * voice : 0)
         }
         .animation(.easeOut(duration: 0.1), value: level)
         .onAppear { if motion.reduceMotion != reduceMotion { restart(snap: false, previous: nil) } }
