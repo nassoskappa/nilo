@@ -11,6 +11,7 @@ import NiloUI
 //   active app, so the app you're in stays in front and keeps its menu bar.
 // - Opens on the screen under the pointer, on every Space, over full-screen apps.
 // - Grows in about 350 ms with a soft spring, shrinks in about 250 ms. Reduce Motion: a fade.
+// - Opening means listening: the mic is on only while the ring faces you in Listening.
 
 // MARK: - Sizes
 
@@ -117,6 +118,15 @@ final class NotchPanelModel {
     var visible = false
     var reduceMotion = false
     var geometry: NotchGeometry
+    /// Shown instead of "Ask Nilo to…" when Nilo can't hear.
+    var micProblem: MicProblem?
+
+    enum MicProblem {
+        /// The person said no to the microphone.
+        case off
+        /// No microphone, or it would not start.
+        case missing
+    }
 
     init(geometry: NotchGeometry) {
         self.geometry = geometry
@@ -151,6 +161,35 @@ struct NotchPanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    @ViewBuilder
+    private var prompt: some View {
+        switch model.micProblem {
+        case nil:
+            Text("Ask Nilo to…")
+                .font(.body)
+                .foregroundStyle(.white.opacity(0.55))
+        case .off:
+            HStack(spacing: 10) {
+                Text("Microphone is off.")
+                    .font(.body)
+                    .foregroundStyle(.white.opacity(0.55))
+                Button("Turn on") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(.body.weight(.medium))
+                .foregroundStyle(NiloColor.signature)
+                .accessibilityHint("Opens Privacy settings for the microphone")
+            }
+        case .missing:
+            Text("No microphone found.")
+                .font(.body)
+                .foregroundStyle(.white.opacity(0.55))
+        }
+    }
+
     /// Always laid out at full size. The growing shape reveals it.
     private func content(_ g: NotchGeometry) -> some View {
         VStack(spacing: 0) {
@@ -163,9 +202,7 @@ struct NotchPanelView: View {
                         .font(NiloFont.mono(11))
                         .tracking(1)
                         .foregroundStyle(NiloColor.needsYou)
-                    Text("Ask Nilo to…")
-                        .font(.body)
-                        .foregroundStyle(.white.opacity(0.55))
+                    prompt
                 }
                 Spacer(minLength: 0)
             }
@@ -205,6 +242,14 @@ final class NotchPanelController {
     private let mark: MenuBarMark
     private let model: NotchPanelModel
     private let panel = NotchPanel()
+    private let mic = Microphone()
+    /// The prototype's stand-in for real work: Thinking, then Done, then Idle.
+    private var demo: Task<Void, Never>?
+    /// While macOS shows its microphone question, app switches must not close the panel.
+    private var askingPermission = false
+    /// Hold to talk: when the shortcut went down, if that press opened the panel.
+    private var heldSince: Double?
+    private var shortcutDown = false
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
     /// Bumped on every open and close, so a late "order out" never hides a panel just reopened.
@@ -216,6 +261,78 @@ final class NotchPanelController {
         let host = NSHostingView(rootView: NotchPanelView(model: model, mark: mark))
         host.sizingOptions = []
         panel.contentView = host
+
+        mic.onLevel = { [weak mark] level in mark?.level = level }
+        mic.onFinished = { [weak self] in self?.gotIt() }
+    }
+
+    // MARK: The shortcut: tap to open and close, hold to talk
+
+    func shortcutPressed() {
+        guard !shortcutDown else { return }  // key repeat while held
+        shortcutDown = true
+        if model.expanded {
+            close()
+        } else {
+            open()
+            heldSince = ProcessInfo.processInfo.systemUptime
+        }
+    }
+
+    func shortcutReleased() {
+        shortcutDown = false
+        defer { heldSince = nil }
+        // Held long enough to be "hold to talk": letting go means "got it", no waiting for quiet.
+        guard let since = heldSince, ProcessInfo.processInfo.systemUptime - since >= 0.4 else { return }
+        gotIt()
+    }
+
+    // MARK: Listening
+
+    /// Opening means listening: turn to the person and switch the mic on.
+    private func startListening(generation gen: Int) {
+        demo?.cancel()
+        model.micProblem = nil
+        mark.set(.listening)
+        askingPermission = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await self.mic.start()
+            self.askingPermission = false
+            // Closed, reopened or moved on while we waited: don't leave the mic on.
+            guard self.generation == gen, self.model.expanded || self.model.visible, self.mark.state == .listening else {
+                self.mic.stop()
+                return
+            }
+            switch result {
+            case .listening: break
+            case .denied: self.model.micProblem = .off
+            case .unavailable: self.model.micProblem = .missing
+            }
+        }
+    }
+
+    /// "Got it": the person has finished. The mic goes off, the ring blinks and turns back to
+    /// the task. For now a short Thinking, then Done once, then Idle stands in for real work.
+    private func gotIt() {
+        guard mark.state == .listening else { return }
+        mic.stop()
+        mark.set(.thinking)
+        demo?.cancel()
+        demo = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let self, !Task.isCancelled, self.mark.state == .thinking else { return }
+            self.mark.set(.done)
+            try? await Task.sleep(for: .seconds(2.2))
+            guard !Task.isCancelled, self.mark.state == .done else { return }
+            self.mark.set(.idle)
+        }
+    }
+
+    private func stopListening() {
+        demo?.cancel()
+        demo = nil
+        mic.stop()
     }
 
     func toggle() {
@@ -235,6 +352,7 @@ final class NotchPanelController {
         panel.orderFrontRegardless()
         panel.makeKey()
         startWatching()
+        startListening(generation: gen)
 
         // Draw it closed once, then grow on the next turn.
         Task { @MainActor [weak self] in
@@ -248,6 +366,8 @@ final class NotchPanelController {
     func close() {
         guard model.expanded else { return }
         stopWatching()
+        stopListening()
+        if mark.state != .idle { mark.set(.idle) }
         generation += 1
         let gen = generation
         let duration = model.reduceMotion ? 0.2 : 0.25
@@ -286,7 +406,10 @@ final class NotchPanelController {
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification] {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.close() }
+                MainActor.assumeIsolated {
+                    guard let self, !self.askingPermission else { return }
+                    self.close()
+                }
             })
         }
         observers.append(NotificationCenter.default.addObserver(
@@ -307,7 +430,9 @@ final class NotchPanelController {
     private func handleKey(code: UInt16, chars: String?, shift: Bool) -> Bool {
         switch code {
         case 53: close()                          // Esc
-        case 49: mark.step(shift ? -1 : 1)        // Space
+        case 49:                                  // Space
+            stopListening()
+            mark.step(shift ? -1 : 1)
         default:
             guard chars == "r" else { return false }
             mark.replayNow()

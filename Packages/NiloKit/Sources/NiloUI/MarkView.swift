@@ -181,6 +181,8 @@ public struct MarkView: View {
     /// False once a one-off motion has finished, so the view stops redrawing.
     @State private var running = true
 
+    private var voice: CGFloat { CGFloat(min(max(level, 0), 1)) }
+
     private var color: Color {
         state == .needsYou ? NiloColor.needsYou : NiloColor.signature
     }
@@ -192,8 +194,10 @@ public struct MarkView: View {
                 height: height,
                 color: color,
                 reduceMotion: reduceMotion,
-                swell: state == .listening ? 1 + 0.18 * CGFloat(min(max(level, 0), 1)) : 1
+                swell: state == .listening && !reduceMotion ? 1 + 0.18 * voice : 1
             )
+            // Reduce Motion: the voice brightens the ring instead of swelling it.
+            .brightness(state == .listening && reduceMotion ? 0.3 * voice : 0)
         }
         .animation(.easeOut(duration: 0.1), value: level)
         .onAppear { if motion.reduceMotion != reduceMotion { restart(snap: false, previous: nil) } }

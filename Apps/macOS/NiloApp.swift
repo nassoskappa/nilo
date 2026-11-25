@@ -27,7 +27,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = NotchPanelController(mark: mark)
         self.panel = panel
         // Call Nilo from anywhere. Option-Space, or Control-Option-Space if that's taken.
-        let shortcut = GlobalShortcut(trying: [.optionSpace, .controlOptionSpace]) { panel.toggle() }
+        // Tap to open and close; hold to talk, let go for "got it".
+        let shortcut = GlobalShortcut(trying: [.optionSpace, .controlOptionSpace]) { pressed in
+            pressed ? panel.shortcutPressed() : panel.shortcutReleased()
+        }
         self.shortcut = shortcut
         statusItem = StatusItemController(mark: mark, shortcut: shortcut.combo) { panel.toggle() }
 

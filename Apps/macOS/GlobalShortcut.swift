@@ -31,13 +31,14 @@ final class GlobalShortcut {
     /// The combo that was registered, or nil if every choice was taken.
     private(set) var combo: Combo?
 
-    private let action: () -> Void
+    /// Called with true when the keys go down, false when they come up.
+    private let action: (_ pressed: Bool) -> Void
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private static let log = Logger(subsystem: "nilo", category: "shortcut")
 
     /// Tries each combo in order and keeps the first one no other app has claimed.
-    init(trying choices: [Combo], action: @escaping () -> Void) {
+    init(trying choices: [Combo], action: @escaping (_ pressed: Bool) -> Void) {
         self.action = action
         installHandler()
         for choice in choices {
@@ -62,13 +63,17 @@ final class GlobalShortcut {
     }
 
     private func installHandler() {
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        var specs = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+        ]
         let me = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, userData in
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, userData in
             guard let userData else { return noErr }
+            let pressed = GetEventKind(event) == UInt32(kEventHotKeyPressed)
             let shortcut = Unmanaged<GlobalShortcut>.fromOpaque(userData).takeUnretainedValue()
-            MainActor.assumeIsolated { shortcut.action() }
+            MainActor.assumeIsolated { shortcut.action(pressed) }
             return noErr
-        }, 1, &spec, me, &handler)
+        }, specs.count, &specs, me, &handler)
     }
 }

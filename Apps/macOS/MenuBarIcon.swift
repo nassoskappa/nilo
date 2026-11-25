@@ -20,6 +20,8 @@ final class MenuBarMark {
     /// Bumped by "Play again" (R in the panel). Both the panel and the icon restart when it changes.
     private(set) var replay = 0
     private(set) var image: NSImage
+    /// Microphone level 0...1 while listening. The panel's ring and the icon both swell with it.
+    var level = 0.0
     /// Called with every new image, so the status item can show it.
     @ObservationIgnored var onImage: ((NSImage) -> Void)?
 
@@ -71,7 +73,8 @@ final class MenuBarMark {
                 let moving = self.motion.isLooping
                     || now.timeIntervalSince(self.motion.start) < self.motion.settleDuration
                 let frame = self.motion.frame(at: moving ? now : self.motion.settledDate)
-                self.image = self.render(frame, state: self.state, reduceMotion: reduceMotion)
+                let swell = self.state == .listening && !reduceMotion ? 1 + 0.12 * min(max(self.level, 0), 1) : 1
+                self.image = self.render(frame, state: self.state, reduceMotion: reduceMotion, swell: swell)
                 self.onImage?(self.image)
                 guard moving else { break }
                 try? await Task.sleep(for: .milliseconds(33))
@@ -79,13 +82,14 @@ final class MenuBarMark {
         }
     }
 
-    private func render(_ frame: MarkFrame, state: MarkState, reduceMotion: Bool) -> NSImage {
+    private func render(_ frame: MarkFrame, state: MarkState, reduceMotion: Bool, swell: Double = 1) -> NSImage {
         let view = MarkFrameView(
             frame: frame,
             height: markHeight,
             color: .black,
             glow: false,
             reduceMotion: reduceMotion,
+            swell: swell,
             canvas: CGSize(width: size, height: size)
         )
         let renderer = ImageRenderer(content: view)
