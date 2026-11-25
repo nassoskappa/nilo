@@ -22,10 +22,12 @@ struct NiloApp: App {
 
 private struct StatePicker: View {
     @Binding var state: MarkState
+    /// Bumped by "Play again" so the current state's motion restarts.
+    @State private var replay = 0
 
     var body: some View {
         VStack(spacing: 20) {
-            MarkView(state: state, level: 0.5, height: 44)
+            MarkView(state: state, level: 0.5, height: 44, replay: replay)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
                 .background(Color.black, in: .rect(cornerRadius: 16))
@@ -40,6 +42,8 @@ private struct StatePicker: View {
                 Button("Next") { step(1) }
                     .keyboardShortcut(.space, modifiers: [])
             }
+
+            Button("Play again") { replay += 1 }
 
             Divider()
             Button("Quit Nilo") { NSApplication.shared.terminate(nil) }

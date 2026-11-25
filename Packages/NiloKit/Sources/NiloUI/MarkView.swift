@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The living cursor. Seven states, one colour. Motion carries the meaning.
+/// The seven things Nilo can be doing. Motion carries the meaning.
 public enum MarkState: String, CaseIterable, Sendable, Identifiable {
     case idle, listening, thinking, working, needsYou, done, noted
     public var id: String { rawValue }
@@ -18,136 +18,248 @@ public enum MarkState: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// Starting point for Phase 1. Timings follow the canvas; tune them by feel.
+// MARK: - Geometry
+
+/// The one shape. `turn` 0 is side-on (the cursor bar), 1 is face-on (the ring).
+/// The turn is faked: the width grows from a bar to a circle, and the line thins.
+enum RingGeometry {
+    /// Bar width, as a share of the mark's height (same proportion as the old cursor).
+    static let barWidth: CGFloat = 0.30
+    /// Face-on diameter, as a share of the height.
+    static let ringDiameter: CGFloat = 0.82
+    /// Face-on line width, as a share of the height.
+    static let ringLine: CGFloat = 0.14
+}
+
+/// A ring drawn as a filled outline, so every measurement can animate with `turn`.
+struct RingShape: Shape {
+    var turn: CGFloat
+    var height: CGFloat
+
+    var animatableData: CGFloat {
+        get { turn }
+        set { turn = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let barW = height * RingGeometry.barWidth
+        let ringD = height * RingGeometry.ringDiameter
+        let ringLine = height * RingGeometry.ringLine
+        let width = barW + (ringD - barW) * turn
+        let tall = height + (ringD - height) * turn
+        let line = barW + (ringLine - barW) * turn
+        // The centre line of the stroke. At turn 0 it has no width, so the stroke is the bar.
+        let w = max(width - line, 0.001)
+        let h = max(tall - line, 0.001)
+        let centre = CGRect(x: rect.midX - w / 2, y: rect.midY - h / 2, width: w, height: h)
+        return Path(roundedRect: centre, cornerRadius: min(w, h) / 2)
+            .strokedPath(StrokeStyle(lineWidth: line, lineCap: .round, lineJoin: .round))
+    }
+}
+
+// MARK: - The mark
+
+/// Nilo's character: a ring of light. Side-on it reads as the cursor, face-on it is a ring.
+/// Side-on means Nilo faces the task. Face-on means Nilo faces you.
 public struct MarkView: View {
     public var state: MarkState
-    /// Microphone level, 0...1. Drives the listening width.
+    /// Microphone level, 0...1. Swells the ring while listening.
     public var level: Double
-    /// Height of the mark in points. Width scales from it.
+    /// Height of the mark in points. Everything scales from it.
     public var height: CGFloat
+    /// Change this number to replay the current state's motion from the start.
+    public var replay: Int
 
-    public init(state: MarkState, level: Double = 0, height: CGFloat = 34) {
+    public init(state: MarkState, level: Double = 0, height: CGFloat = 34, replay: Int = 0) {
         self.state = state
         self.level = level
         self.height = height
+        self.replay = replay
     }
 
-    private var baseWidth: CGFloat { height * 0.3 }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// 0 = side-on, 1 = face-on.
+    @State private var turn: CGFloat = 0
+    /// Vertical scale of the blink. 1 = open, 0.08 = closed.
+    @State private var blink: CGFloat = 1
+    /// 0 = no smile, 1 = full smile.
+    @State private var smile: Double = 0
+    /// Start of the current loop, so a breath begins at rest.
+    @State private var epoch = Date()
+    @State private var lastReplay = 0
+
+    private struct PlayKey: Equatable {
+        var state: MarkState
+        var replay: Int
+    }
+
+    private var breathPeriod: Double? {
+        guard !reduceMotion else { return nil }
+        switch state {
+        case .idle: return 3.2
+        case .thinking: return 2.2
+        default: return nil
+        }
+    }
+
+    private var color: Color {
+        state == .needsYou ? NiloColor.needsYou : NiloColor.signature
+    }
 
     public var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            ZStack {
-                if state == .working {
-                    workingBar(t)
-                } else {
-                    RoundedRectangle(cornerRadius: baseWidth / 2, style: .continuous)
-                        .fill(state == .needsYou ? NiloColor.needsYou : NiloColor.signature)
-                        .frame(width: width(t), height: height)
-                        .scaleEffect(x: scaleX(t), y: scaleY(t))
-                        .offset(y: hop(t))
-                        .opacity(opacity(t))
-                        .shadow(color: NiloColor.signature.opacity(0.8), radius: glow(t))
-                }
-            }
-            .frame(width: height * 2.4, height: height * 1.4)
+        TimelineView(.animation(paused: breathPeriod == nil && !(state == .working && !reduceMotion))) { timeline in
+            ring(at: timeline.date.timeIntervalSince(epoch))
         }
+        .frame(width: height * 2.4, height: height * 1.4)
+        .animation(.easeInOut(duration: 0.33), value: state)
+        .task(id: PlayKey(state: state, replay: replay)) { await play() }
         .accessibilityElement()
         .accessibilityLabel("Nilo")
         .accessibilityValue(state.label)
     }
 
-    // MARK: - Motion
+    // MARK: Drawing
 
-    /// Repeating 0...1 phase for a period in seconds.
-    private func phase(_ t: TimeInterval, period: Double) -> Double {
-        (t.truncatingRemainder(dividingBy: period)) / period
+    private func ring(at t: TimeInterval) -> some View {
+        let b = breathPeriod.map { breathe(t, period: $0) } ?? 0
+        let working = state == .working
+        let blinkNorm = (blink - 0.08) / 0.92
+        let swell = state == .listening ? 1 + 0.18 * CGFloat(min(max(level, 0), 1)) : 1
+
+        return ZStack {
+            layers(smile: smile)
+                .opacity(working ? 0.35 : 1)
+            if working {
+                layers(smile: 0)
+                    .mask(sweep(at: t))
+            }
+        }
+        .scaleEffect(swell)
+        .animation(.easeOut(duration: 0.1), value: level)
+        // Idle and thinking: breathe about 1.06 wide by 0.96 tall.
+        .scaleEffect(x: 1 + 0.06 * CGFloat(b), y: 1 - 0.04 * CGFloat(b))
+        // Blink: the ring closes flat. With Reduce Motion it dips in brightness instead.
+        .scaleEffect(y: reduceMotion ? 1 : blink)
+        .opacity(reduceMotion ? 0.3 + 0.7 * Double(blinkNorm) : 1)
+        .shadow(color: NiloColor.signature.opacity(0.7), radius: height * 0.28)
     }
 
-    private func width(_ t: TimeInterval) -> CGFloat {
-        guard state == .listening else { return baseWidth }
-        // Width is the voice. Clamp so silence still shows a thin mark.
-        return baseWidth + CGFloat(min(max(level, 0), 1)) * height * 1.2
+    /// The ring itself, plus the smile arc when there is one.
+    private func layers(smile: Double) -> some View {
+        ZStack {
+            shape
+                // The top dims to 16 %. The whole ring stays visible.
+                .opacity(1 - 0.84 * smile)
+            if smile > 0 {
+                let d = height * RingGeometry.ringDiameter
+                let line = height * RingGeometry.ringLine
+                Circle()
+                    .inset(by: line / 2)
+                    .trim(from: 15.0 / 360, to: 165.0 / 360) // about 150 degrees, centred on the bottom
+                    .stroke(color, style: StrokeStyle(lineWidth: line, lineCap: .round))
+                    .frame(width: d, height: d)
+                    .opacity(smile)
+            }
+        }
+        .frame(width: height, height: height)
     }
 
-    private func opacity(_ t: TimeInterval) -> Double {
-        switch state {
-        case .idle:
-            // Slow blink: on, fade, off, back. Period 2.8 s.
-            let p = phase(t, period: 2.8)
-            if p < 0.4 { return 1 }
-            if p < 0.55 { return 1 - (p - 0.4) / 0.15 * 0.82 }
-            if p < 0.9 { return 0.18 }
-            return 0.18 + (p - 0.9) / 0.1 * 0.82
-        case .thinking:
-            return 0.65 + 0.35 * breathe(t, period: 2.2)
-        default:
-            return 1
+    @ViewBuilder
+    private var shape: some View {
+        if reduceMotion {
+            // Cross-fade between the two shapes instead of turning.
+            ZStack {
+                RingShape(turn: 0, height: height).fill(color, style: FillStyle(eoFill: true)).opacity(1 - turn)
+                RingShape(turn: 1, height: height).fill(color, style: FillStyle(eoFill: true)).opacity(turn)
+            }
+        } else {
+            RingShape(turn: turn, height: height).fill(color, style: FillStyle(eoFill: true))
         }
     }
 
-    private func scaleX(_ t: TimeInterval) -> CGFloat {
-        switch state {
-        case .thinking: 1 + 1.2 * CGFloat(breathe(t, period: 2.2))
-        case .noted: 1 + 0.25 * CGFloat(pulse(t, period: 3))
-        default: 1
-        }
+    /// Working: a bright stretch of the cursor, moving along its edge.
+    private func sweep(at t: TimeInterval) -> some View {
+        let travel = CGFloat((sin(t / 1.6 * 2 * .pi - .pi / 2) + 1) / 2)
+        return Rectangle()
+            .fill(LinearGradient(colors: [.clear, .black, .clear], startPoint: .top, endPoint: .bottom))
+            .frame(width: height, height: height * 0.55)
+            .offset(y: (travel - 0.5) * height * 0.85)
+            .frame(width: height, height: height)
     }
 
-    private func scaleY(_ t: TimeInterval) -> CGFloat {
-        guard state == .done else { return 1 }
-        // A nod: squash, overshoot, settle. Then rest.
-        let p = CGFloat(phase(t, period: 2.6))
-        if p < 0.12 { return 1 - 0.65 * (p / 0.12) }
-        if p < 0.24 { return 0.35 + 0.83 * ((p - 0.12) / 0.12) }
-        if p < 0.34 { return 1.18 - 0.18 * ((p - 0.24) / 0.10) }
-        return 1
-    }
-
-    private func hop(_ t: TimeInterval) -> CGFloat {
-        guard state == .needsYou else { return 0 }
-        let p = CGFloat(phase(t, period: 2.4))
-        // One hop, a smaller one, then wait.
-        if p < 0.06 { return -height * 0.26 * (p / 0.06) }
-        if p < 0.12 { return -height * 0.26 * (1 - (p - 0.06) / 0.06) }
-        if p < 0.18 { return -height * 0.12 * ((p - 0.12) / 0.06) }
-        if p < 0.24 { return -height * 0.12 * (1 - (p - 0.18) / 0.06) }
-        return 0
-    }
-
-    private func glow(_ t: TimeInterval) -> CGFloat {
-        switch state {
-        case .needsYou: height * 0.45
-        case .noted: height * (0.25 + 0.5 * CGFloat(pulse(t, period: 3)))
-        default: height * 0.3
-        }
-    }
-
-    /// Smooth 0...1...0.
+    /// Smooth 0...1...0 over a period, starting at rest.
     private func breathe(_ t: TimeInterval, period: Double) -> Double {
-        (sin(phase(t, period: period) * 2 * .pi - .pi / 2) + 1) / 2
+        let p = t.truncatingRemainder(dividingBy: period) / period
+        return (sin(p * 2 * .pi - .pi / 2) + 1) / 2
     }
 
-    /// One slow pulse per period, then rest.
-    private func pulse(_ t: TimeInterval, period: Double) -> Double {
-        let p = phase(t, period: period)
-        guard p > 0.3, p < 0.7 else { return 0 }
-        return sin((p - 0.3) / 0.4 * .pi)
-    }
+    // MARK: Sequencing
 
-    private func workingBar(_ t: TimeInterval) -> some View {
-        let track = height * 2.3
-        let thumb = height * 0.55
-        let barHeight = max(3, height * 0.12)
-        let travel = CGFloat((sin(phase(t, period: 1.8) * 2 * .pi) + 1) / 2)
-        return ZStack(alignment: .leading) {
-            Capsule().fill(Color.white.opacity(0.12)).frame(width: track, height: barHeight)
-            Capsule()
-                .fill(NiloColor.signature)
-                .frame(width: thumb, height: barHeight)
-                .shadow(color: NiloColor.signature.opacity(0.8), radius: height * 0.2)
-                .offset(x: (track - thumb) * travel)
+    /// Plays the motion for the current state. SwiftUI cancels it when the state changes.
+    private func play() async {
+        epoch = Date()
+        if replay != lastReplay {
+            lastReplay = replay
+            var tx = Transaction()
+            tx.disablesAnimations = true
+            withTransaction(tx) {
+                turn = 0
+                blink = 1
+                smile = 0
+            }
         }
+        if smile != 0 || blink != 1 {
+            withAnimation(.easeOut(duration: 0.15)) {
+                smile = 0
+                blink = 1
+            }
+        }
+
+        switch state {
+        case .idle, .thinking, .working:
+            _ = await step(turnTime) { turn = 0 }
+        case .listening, .needsYou:
+            _ = await step(turnTime) { turn = 1 }
+        case .noted:
+            guard await step(turnTime, { turn = 0 }) else { return }
+            // A glance: a quarter turn and back.
+            guard await step(0.14, { turn = 0.5 }) else { return }
+            _ = await step(0.18) { turn = 0 }
+        case .done:
+            await playDone()
+        }
+    }
+
+    /// Done, once: turn to the person, blink, smile, turn back and rest.
+    private func playDone() async {
+        guard await step(turnTime, { turn = 1 }) else { return }
+        guard await pause(0.12) else { return }
+        // Blink: close in 80 ms, open in 120 ms.
+        guard await step(0.08, { blink = 0.08 }) else { return }
+        guard await step(0.12, { blink = 1 }) else { return }
+        guard await pause(0.1) else { return }
+        // Smile: in 300 ms, hold 500 ms, out 350 ms.
+        guard await step(0.3, { smile = 1 }) else { return }
+        guard await pause(0.5) else { return }
+        guard await step(0.35, { smile = 0 }) else { return }
+        guard await pause(0.1) else { return }
+        _ = await step(turnTime) { turn = 0 }
+    }
+
+    /// 330 ms with ease-in-out. Shorter when Reduce Motion cross-fades.
+    private var turnTime: Double { reduceMotion ? 0.2 : 0.33 }
+
+    /// Animates a change and waits for it. Returns false if the state changed meanwhile.
+    private func step(_ seconds: Double, _ change: () -> Void) async -> Bool {
+        withAnimation(.easeInOut(duration: seconds)) { change() }
+        try? await Task.sleep(for: .seconds(seconds))
+        return !Task.isCancelled
+    }
+
+    private func pause(_ seconds: Double) async -> Bool {
+        try? await Task.sleep(for: .seconds(seconds))
+        return !Task.isCancelled
     }
 }
 

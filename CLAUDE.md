@@ -114,6 +114,10 @@ Short sentences, plain words, lead with the result. "Done. Thursday's clear afte
 
 - [x] 0. Setup: this repo
 - [ ] 1. Motion prototype: the mark in a notch panel, mic-driven listening, hotkey cycles states
+  - [ ] 1a. The ring: rebuild MarkView as the character
+  - [ ] 1b. The notch panel: Nilo drops down from the notch instead of the menu bar window
+  - [ ] 1c. A global keyboard shortcut that calls Nilo from anywhere
+  - [ ] 1d. Mic-driven listening: the ring reacts to the voice level
 - [ ] 2. Mac core: tools for calendar, contacts, Messages, WhatsApp; on-device router; plan card; jobs 1 and 2
 - [ ] 3. Claude own-key provider, spend meter, memory
 - [ ] 4. Mail: Gmail, iCloud IMAP, reminders, Google invites; jobs 5 and 3
