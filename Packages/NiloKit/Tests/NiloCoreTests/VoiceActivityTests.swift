@@ -64,13 +64,13 @@ struct VoiceActivityTests {
         #expect(feed(&v, rms: speaking, for: 0.5, from: 1.3) == nil)
     }
 
-    @Test func levelRisesFastAndFallsSlowly() {
+    @Test func levelRisesFastAndFallsSmoothly() {
         var v = VoiceActivity()
         _ = feed(&v, rms: speaking, for: 0.1, from: 0)
         #expect(v.level > 0.6)
-        _ = feed(&v, rms: quiet, for: 0.1, from: 0.1)
-        #expect(v.level > 0.3)  // still settling
-        _ = feed(&v, rms: quiet, for: 1.5, from: 0.2)
+        _ = feed(&v, rms: quiet, for: 0.05, from: 0.1)
+        #expect(v.level > 0.4)  // follows the voice down, but doesn't snap
+        _ = feed(&v, rms: quiet, for: 1.5, from: 0.15)
         #expect(v.level < 0.05)
     }
 }

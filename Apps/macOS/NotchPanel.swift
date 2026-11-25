@@ -195,7 +195,7 @@ struct NotchPanelView: View {
         VStack(spacing: 0) {
             Color.clear.frame(height: g.notch.height)
             HStack(spacing: 14) {
-                MarkView(state: mark.state, height: 34, replay: mark.replay)
+                MarkView(state: mark.state, level: mark.level, height: 34, replay: mark.replay)
                     .frame(width: 44, height: 44)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(mark.state.label.uppercased())

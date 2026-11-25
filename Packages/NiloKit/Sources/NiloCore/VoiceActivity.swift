@@ -12,7 +12,7 @@ public struct VoiceActivity: Sendable {
         public var ceilingDB = -20.0
         /// How fast the level rises and falls, in seconds. Fast up, slow down: no jitter.
         public var attack = 0.03
-        public var release = 0.25
+        public var release = 0.12
         /// Loudness that counts as speech, and loudness that counts as quiet.
         /// About -40 dB and -45 dB.
         public var speechLevel = 0.41

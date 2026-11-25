@@ -183,6 +183,15 @@ public struct MarkView: View {
 
     private var voice: CGFloat { CGFloat(min(max(level, 0), 1)) }
 
+    /// While listening, the glow swells with the voice as well as the size, so the ring answers
+    /// each syllable. The colour keeps its hue; only the light grows.
+    private func voiced(_ frame: MarkFrame) -> MarkFrame {
+        guard state == .listening else { return frame }
+        var f = frame
+        f.glow += 1.2 * Double(voice)
+        return f
+    }
+
     private var color: Color {
         state == .needsYou ? NiloColor.needsYou : NiloColor.signature
     }
@@ -190,7 +199,7 @@ public struct MarkView: View {
     public var body: some View {
         TimelineView(.animation(paused: !running)) { timeline in
             MarkFrameView(
-                frame: motion.frame(at: running ? timeline.date : motion.settledDate),
+                frame: voiced(motion.frame(at: running ? timeline.date : motion.settledDate)),
                 height: height,
                 color: color,
                 reduceMotion: reduceMotion,
@@ -199,7 +208,7 @@ public struct MarkView: View {
             // Reduce Motion: the voice brightens the ring instead of swelling it.
             .brightness(state == .listening && reduceMotion ? 0.45 * voice : 0)
         }
-        .animation(.easeOut(duration: 0.1), value: level)
+        .animation(.easeOut(duration: 0.05), value: level)
         .onAppear { if motion.reduceMotion != reduceMotion { restart(snap: false, previous: nil) } }
         .onChange(of: state) { old, _ in restart(snap: false, previous: old) }
         .onChange(of: replay) { restart(snap: true, previous: nil) }
