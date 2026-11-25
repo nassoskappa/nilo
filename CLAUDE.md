@@ -73,11 +73,11 @@ The mark is a torus (a ring of light). Side-on, it looks like the cursor. Face-o
 
 | State | Shape | Motion |
 |---|---|---|
-| idle | side-on | slow breath (scale about 1.06 x 0.96, 3.2 s loop) |
-| listening | turns face-on | stays face-on while the person speaks or types |
-| thinking | side-on | breathe (2.2 s) |
+| idle | side-on | slow breath at full brightness (width +35 %, height -6 %, glow swells, 3.2 s loop). Never fades |
+| listening | turns face-on | stays face-on while the person speaks or types; slow pulse (1.8 s) plus a swell with voice level |
+| thinking | side-on | deeper, quicker breath (width +60 %, 2.2 s) with a soft brightness pulse, never below 70 % |
 | working | side-on | progress moves along the cursor edge. Never a spinning ring |
-| needs you | turns face-on | plain ring, calm. No blink, no smile |
+| needs you | turns face-on | calm ring that slowly resizes (+10 %, 3.4 s). No blink, no smile, no hop |
 | done | turns face-on | blink, then smile if the job went well, then turns back side-on |
 | noted | side-on | quick quarter turn and back (a glance) |
 

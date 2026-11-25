@@ -94,12 +94,44 @@ public struct MarkView: View {
         var replay: Int
     }
 
-    private var breathPeriod: Double? {
-        guard !reduceMotion else { return nil }
+    /// The slow, looping life of a state: size, glow and brightness over time.
+    private struct Pulse {
+        var sx: CGFloat = 1
+        var sy: CGFloat = 1
+        var glow: CGFloat = 1
+        var opacity: Double = 1
+    }
+
+    /// States that loop need the clock. Reduce Motion stops all loops.
+    private var loops: Bool {
+        guard !reduceMotion else { return false }
         switch state {
-        case .idle: return 3.2
-        case .thinking: return 2.2
-        default: return nil
+        case .idle, .thinking, .working, .listening, .needsYou: return true
+        case .noted, .done: return false
+        }
+    }
+
+    private func pulse(at t: TimeInterval) -> Pulse {
+        guard loops else { return Pulse() }
+        switch state {
+        case .idle:
+            // Slow breath, full brightness. The bar widens and the glow swells.
+            let b = CGFloat(breathe(t, period: 3.2))
+            return Pulse(sx: 1 + 0.35 * b, sy: 1 - 0.06 * b, glow: 1 + 0.5 * b)
+        case .thinking:
+            // Quicker and deeper than idle, with a soft brightness pulse. Never below 70 %.
+            let b = CGFloat(breathe(t, period: 2.2))
+            return Pulse(sx: 1 + 0.6 * b, sy: 1 - 0.08 * b, glow: 1 + 0.3 * b, opacity: 0.7 + 0.3 * Double(b))
+        case .listening:
+            // Waiting for you: a slow pulse of size and glow, on top of the voice swell.
+            let b = CGFloat(breathe(t, period: 1.8))
+            return Pulse(sx: 1 + 0.07 * b, sy: 1 + 0.07 * b, glow: 1 + 0.6 * b)
+        case .needsYou:
+            // Calm: the ring slowly resizes. No break, no glow change.
+            let b = CGFloat(breathe(t, period: 3.4))
+            return Pulse(sx: 1 + 0.10 * b, sy: 1 + 0.10 * b)
+        default:
+            return Pulse()
         }
     }
 
@@ -108,7 +140,7 @@ public struct MarkView: View {
     }
 
     public var body: some View {
-        TimelineView(.animation(paused: breathPeriod == nil && !(state == .working && !reduceMotion))) { timeline in
+        TimelineView(.animation(paused: !loops)) { timeline in
             ring(at: timeline.date.timeIntervalSince(epoch))
         }
         .frame(width: height * 2.4, height: height * 1.4)
@@ -122,7 +154,7 @@ public struct MarkView: View {
     // MARK: Drawing
 
     private func ring(at t: TimeInterval) -> some View {
-        let b = breathPeriod.map { breathe(t, period: $0) } ?? 0
+        let p = pulse(at: t)
         let working = state == .working
         let blinkNorm = (blink - 0.08) / 0.92
         let swell = state == .listening ? 1 + 0.18 * CGFloat(min(max(level, 0), 1)) : 1
@@ -137,12 +169,11 @@ public struct MarkView: View {
         }
         .scaleEffect(swell)
         .animation(.easeOut(duration: 0.1), value: level)
-        // Idle and thinking: breathe about 1.06 wide by 0.96 tall.
-        .scaleEffect(x: 1 + 0.06 * CGFloat(b), y: 1 - 0.04 * CGFloat(b))
+        .scaleEffect(x: p.sx, y: p.sy)
         // Blink: the ring closes flat. With Reduce Motion it dips in brightness instead.
         .scaleEffect(y: reduceMotion ? 1 : blink)
-        .opacity(reduceMotion ? 0.3 + 0.7 * Double(blinkNorm) : 1)
-        .shadow(color: NiloColor.signature.opacity(0.7), radius: height * 0.28)
+        .opacity(reduceMotion ? 0.3 + 0.7 * Double(blinkNorm) : p.opacity)
+        .shadow(color: NiloColor.signature.opacity(0.7), radius: height * 0.28 * p.glow)
     }
 
     /// The ring itself, plus the smile arc when there is one.
