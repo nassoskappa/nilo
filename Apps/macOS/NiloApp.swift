@@ -13,8 +13,8 @@ struct NiloApp: App {
         MenuBarExtra {
             StatePicker(state: $state)
         } label: {
-            // The menu bar follows the system tint: monochrome mark.
-            Image(systemName: "character.cursor.ibeam")
+            // Monochrome template: a bar when Nilo faces the task, a ring when it faces you.
+            Image(nsImage: MenuBarIcon.image(for: state))
         }
         .menuBarExtraStyle(.window)
     }
