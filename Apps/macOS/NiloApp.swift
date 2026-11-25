@@ -21,11 +21,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let mark = MenuBarMark()
     private var panel: NotchPanelController?
     private var statusItem: StatusItemController?
+    private var shortcut: GlobalShortcut?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let panel = NotchPanelController(mark: mark)
         self.panel = panel
-        statusItem = StatusItemController(mark: mark) { panel.toggle() }
+        // Call Nilo from anywhere. Option-Space, or Control-Option-Space if that's taken.
+        let shortcut = GlobalShortcut(trying: [.optionSpace, .controlOptionSpace]) { panel.toggle() }
+        self.shortcut = shortcut
+        statusItem = StatusItemController(mark: mark, shortcut: shortcut.combo) { panel.toggle() }
 
         #if DEBUG
         // For screenshots: `open Nilo.app --args -NiloOpenOnLaunch YES`.

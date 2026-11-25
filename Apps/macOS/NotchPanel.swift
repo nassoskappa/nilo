@@ -277,6 +277,7 @@ final class NotchPanelController {
             let code = event.keyCode
             let chars = event.charactersIgnoringModifiers?.lowercased()
             let shift = event.modifierFlags.contains(.shift)
+            guard event.modifierFlags.isDisjoint(with: [.option, .control, .command]) else { return event }
             let handled = MainActor.assumeIsolated { self?.handleKey(code: code, chars: chars, shift: shift) ?? false }
             return handled ? nil : event
         }) { monitors.append(m) }
