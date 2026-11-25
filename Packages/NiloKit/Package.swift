@@ -14,5 +14,6 @@ let package = Package(
         // Brand, the living mark, shared SwiftUI views.
         .target(name: "NiloUI", dependencies: ["NiloCore"]),
         .testTarget(name: "NiloCoreTests", dependencies: ["NiloCore"]),
+        .testTarget(name: "NiloUITests", dependencies: ["NiloUI"]),
     ]
 )

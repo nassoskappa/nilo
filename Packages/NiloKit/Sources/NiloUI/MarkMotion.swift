@@ -192,7 +192,9 @@ public struct MarkMotion: Sendable {
             // The ring dims to about 18 % until the loop closes.
             f.dim = ease(seg(t, d.lead, 0.15)) - ease(seg(t, d.flare, 0.05))
             // One lap, clockwise from 12 o'clock. The only time light travels round the ring.
-            if !reduceMotion {
+            // It ends once the loop has closed and the ring is back to full brightness, so the
+            // stroke never stays behind when the ring turns back into the bar.
+            if !reduceMotion, t < d.flare + 0.05 {
                 f.lap = ease(seg(t, d.lapStart, d.lapTime))
             }
             // The loop closes: about 1.6x brightness and 6 % larger for 150 ms, then settle.
