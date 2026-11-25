@@ -19,6 +19,7 @@ The owner is a product designer, not an iOS engineer. Explain choices in plain w
 brew install xcodegen          # once
 xcodegen generate              # after any change to project.yml or new files
 open Nilo.xcodeproj
+./Setup.command               # does the two lines above; also double-clickable in Finder
 cd Packages/NiloKit && swift test
 ```
 
@@ -36,7 +37,7 @@ Apps/macOS/                     Mac app (menu bar, later the notch panel)
 Apps/iOS/                       iPhone and iPad app
 ```
 
-Platforms: macOS 26, iOS 26 and later, Swift 6 with strict concurrency, SwiftUI only. Watch and Apple TV come after the first TestFlight.
+Platforms: macOS 26, iOS 26 and later, Swift 6 with strict concurrency, SwiftUI only. Package.swift needs `swift-tools-version: 6.2` or later (the `.v26` platforms don't exist before that). Build with release Xcode 27 or later. Watch and Apple TV come after the first TestFlight.
 
 ## Architecture rules
 
