@@ -33,7 +33,7 @@ Packages/NiloKit/
   Sources/NiloCore/             models, tools, approvals, memory. No UI.
   Sources/NiloUI/               brand, MarkView, Wordmark, shared SwiftUI
   Tests/NiloCoreTests/          Swift Testing
-Apps/macOS/                     Mac app (menu bar, later the notch panel)
+Apps/macOS/                     Mac app: menu bar icon and the notch panel
 Apps/iOS/                       iPhone and iPad app
 ```
 
@@ -83,6 +83,10 @@ The mark is a torus (a ring of light). Side-on, it looks like the cursor. Face-o
 
 **Menu bar and panel share one motion.** The menu bar icon and the panel (and later the notch panel) draw from the same `MarkMotion` in NiloUI, so they never disagree. Tune numbers there, once.
 
+**Notch panel.** Nilo lives in the notch: called, the notch grows down into a pure black panel (no border, no shadow); dismissed, it shrinks back. Without a notch it drops from the top centre under the menu bar. It never activates Nilo, so the app you're in keeps focus; it opens on the screen under the pointer, on every Space and over full-screen apps. Grow 350 ms soft spring, shrink 250 ms; Reduce Motion fades. Esc, a click outside, or switching apps closes it. Sizes live in `NotchGeometry` (Apps/macOS/NotchPanel.swift).
+
+**Menu bar icon.** Left-click toggles the panel; right-click or Control-click shows Quit. Hidden test keys while the panel is open: Space next state, Shift-Space previous, R play again.
+
 **Menu bar rules.**
 - One colour, tinted by macOS. No cyan, no glow. Motion carries the state.
 - Idle is completely still. Nothing redraws.
@@ -124,8 +128,8 @@ Short sentences, plain words, lead with the result. "Done. Thursday's clear afte
 
 - [x] 0. Setup: this repo
 - [ ] 1. Motion prototype: the mark in a notch panel, mic-driven listening, hotkey cycles states
-  - [ ] 1a. The ring: rebuild MarkView as the character
-  - [ ] 1b. The notch panel: Nilo drops down from the notch instead of the menu bar window
+  - [x] 1a. The ring: rebuild MarkView as the character
+  - [x] 1b. The notch panel: Nilo drops down from the notch instead of the menu bar window
   - [ ] 1c. A global keyboard shortcut that calls Nilo from anywhere
   - [ ] 1d. Mic-driven listening: the ring reacts to the voice level
 - [ ] 2. Mac core: tools for calendar, contacts, Messages, WhatsApp; on-device router; plan card; jobs 1 and 2

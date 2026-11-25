@@ -3,64 +3,33 @@ import SwiftUI
 import NiloCore
 import NiloUI
 
-/// Phase 0 shell: a menu bar app that shows the mark and cycles its states.
-/// Phase 1 replaces the menu with a panel attached to the notch.
+/// Phase 1b: Nilo lives in the notch. The menu bar icon opens and closes the notch panel.
+/// There are no ordinary windows, so the app is all AppKit underneath; SwiftUI draws the panel.
 @main
 struct NiloApp: App {
-    /// Owns the current state and moves the menu bar icon. The panel reads and sets it.
-    @State private var bar = MenuBarMark()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        MenuBarExtra {
-            StatePicker(
-                state: Binding(get: { bar.state }, set: { bar.set($0) }),
-                replay: bar.replay,
-                onReplay: { bar.replayNow() }
-            )
-        } label: {
-            // Monochrome template, moving with the same motion as the panel.
-            Image(nsImage: bar.image)
-        }
-        .menuBarExtraStyle(.window)
+        // A menu bar app needs one scene; this one never shows.
+        Settings { EmptyView() }
     }
 }
 
-private struct StatePicker: View {
-    @Binding var state: MarkState
-    var replay: Int
-    var onReplay: () -> Void
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The one shared state. The menu bar icon and the panel's ring both read it.
+    private let mark = MenuBarMark()
+    private var panel: NotchPanelController?
+    private var statusItem: StatusItemController?
 
-    var body: some View {
-        VStack(spacing: 20) {
-            MarkView(state: state, level: 0.5, height: 44, replay: replay)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 24)
-                .background(Color.black, in: .rect(cornerRadius: 16))
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let panel = NotchPanelController(mark: mark)
+        self.panel = panel
+        statusItem = StatusItemController(mark: mark) { panel.toggle() }
 
-            Text(state.label.uppercased())
-                .font(NiloFont.mono(11))
-                .tracking(1)
-                .foregroundStyle(NiloColor.needsYou)
-
-            HStack {
-                Button("Previous") { step(-1) }
-                Button("Next") { step(1) }
-                    .keyboardShortcut(.space, modifiers: [])
-            }
-
-            Button("Play again", action: onReplay)
-
-            Divider()
-            Button("Quit Nilo") { NSApplication.shared.terminate(nil) }
-                .keyboardShortcut("q")
-        }
-        .padding(20)
-        .frame(width: 280)
-    }
-
-    private func step(_ delta: Int) {
-        let all = MarkState.allCases
-        let index = all.firstIndex(of: state) ?? 0
-        state = all[(index + delta + all.count) % all.count]
+        #if DEBUG
+        // For screenshots: `open Nilo.app --args -NiloOpenOnLaunch YES`.
+        if UserDefaults.standard.bool(forKey: "NiloOpenOnLaunch") { panel.open() }
+        #endif
     }
 }

@@ -17,9 +17,11 @@ import NiloUI
 @Observable
 final class MenuBarMark {
     private(set) var state: MarkState = .idle
-    /// Bumped by "Play again". Both the panel and the icon restart when it changes.
+    /// Bumped by "Play again" (R in the panel). Both the panel and the icon restart when it changes.
     private(set) var replay = 0
     private(set) var image: NSImage
+    /// Called with every new image, so the status item can show it.
+    @ObservationIgnored var onImage: ((NSImage) -> Void)?
 
     private var motion: MarkMotion
     private var loop: Task<Void, Never>?
@@ -38,6 +40,13 @@ final class MenuBarMark {
         let old = state
         state = newState
         begin(snap: false, previous: old)
+    }
+
+    /// Step through the states, for testing. Wraps round at either end.
+    func step(_ delta: Int) {
+        let all = MarkState.allCases
+        let index = all.firstIndex(of: state) ?? 0
+        set(all[(index + delta + all.count) % all.count])
     }
 
     func replayNow() {
@@ -63,6 +72,7 @@ final class MenuBarMark {
                     || now.timeIntervalSince(self.motion.start) < self.motion.settleDuration
                 let frame = self.motion.frame(at: moving ? now : self.motion.settledDate)
                 self.image = self.render(frame, state: self.state, reduceMotion: reduceMotion)
+                self.onImage?(self.image)
                 guard moving else { break }
                 try? await Task.sleep(for: .milliseconds(33))
             }
