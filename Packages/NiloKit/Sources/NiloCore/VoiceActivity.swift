@@ -7,16 +7,17 @@ public struct VoiceActivity: Sendable {
     /// Every number in one place. Tune here.
     public struct Tuning: Sendable {
         /// Quieter than this counts as silence (level 0). Louder than the ceiling is level 1.
-        /// A laptop mic hears normal speech at about -35 to -20 dB, so that fills the range.
+        /// A laptop mic hears normal speech at about -35 to -20 dB, so ordinary talking reaches
+        /// the top of the range.
         public var floorDB = -55.0
-        public var ceilingDB = -20.0
+        public var ceilingDB = -26.0
         /// How fast the level rises and falls, in seconds. Fast up, slow down: no jitter.
         public var attack = 0.03
         public var release = 0.12
         /// Loudness that counts as speech, and loudness that counts as quiet.
         /// About -40 dB and -45 dB.
-        public var speechLevel = 0.41
-        public var quietLevel = 0.27
+        public var speechLevel = 0.50
+        public var quietLevel = 0.33
         /// Speech must last this long before Nilo waits for the end (ignores a cough or a click).
         public var minSpeech = 0.25
         /// Quiet for this long after speech means "they've finished".

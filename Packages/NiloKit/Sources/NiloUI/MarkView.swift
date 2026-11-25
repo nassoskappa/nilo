@@ -188,7 +188,7 @@ public struct MarkView: View {
     private func voiced(_ frame: MarkFrame) -> MarkFrame {
         guard state == .listening else { return frame }
         var f = frame
-        f.glow += 1.2 * Double(voice)
+        f.glow += 2.0 * Double(voice)
         return f
     }
 
@@ -203,10 +203,10 @@ public struct MarkView: View {
                 height: height,
                 color: color,
                 reduceMotion: reduceMotion,
-                swell: state == .listening && !reduceMotion ? 1 + 0.35 * voice : 1
+                swell: state == .listening && !reduceMotion ? 1 + 0.6 * voice : 1
             )
             // Reduce Motion: the voice brightens the ring instead of swelling it.
-            .brightness(state == .listening && reduceMotion ? 0.45 * voice : 0)
+            .brightness(state == .listening && reduceMotion ? 0.6 * voice : 0)
         }
         .animation(.easeOut(duration: 0.05), value: level)
         .onAppear { if motion.reduceMotion != reduceMotion { restart(snap: false, previous: nil) } }
