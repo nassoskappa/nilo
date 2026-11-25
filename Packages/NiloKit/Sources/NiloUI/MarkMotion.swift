@@ -12,8 +12,12 @@ public struct MarkFrame: Sendable, Equatable {
     public var turn = 0.0
     /// Vertical scale of the blink. 1 = open, 0.08 = closed.
     public var blink = 1.0
-    /// 0 = no smile, 1 = full smile.
-    public var smile = 0.0
+    /// Done: how far the ring is dimmed to about 18 %. 0 = normal, 1 = dimmed.
+    public var dim = 0.0
+    /// Done: how far the bright stroke has drawn round the ring, 0...1, from 12 o'clock, clockwise.
+    public var lap = 0.0
+    /// Done: the flare when the loop closes. 0 = none, 1 = full.
+    public var flare = 0.0
     public var sx = 1.0
     public var sy = 1.0
     public var glow = 1.0
@@ -35,13 +39,23 @@ public struct MarkMotion: Sendable {
     public let start: Date
     /// How face-on the mark was when this state began, so a turn continues smoothly.
     public let fromTurn: Double
+    /// The state before this one. Leaving Listening ends with one blink.
+    public let previous: MarkState?
 
-    public init(state: MarkState, profile: MarkProfile, reduceMotion: Bool, start: Date = Date(), fromTurn: Double = 0) {
+    public init(
+        state: MarkState,
+        profile: MarkProfile,
+        reduceMotion: Bool,
+        start: Date = Date(),
+        fromTurn: Double = 0,
+        previous: MarkState? = nil
+    ) {
         self.state = state
         self.profile = profile
         self.reduceMotion = reduceMotion
         self.start = start
         self.fromTurn = fromTurn
+        self.previous = previous
     }
 
     // MARK: Timing
@@ -63,8 +77,18 @@ public struct MarkMotion: Sendable {
         }
     }
 
+    /// "Got it": when Listening ends, the ring blinks once before the next state begins.
+    private var blinksFirst: Bool {
+        previous == .listening && state != .listening && fromTurn > 0.9
+    }
+
+    /// Time the blink takes, plus a short beat, before the new state starts moving.
+    private var blinkLead: Double { blinksFirst ? 0.08 + 0.12 + 0.06 : 0 }
+
     /// Seconds after `start` when a non-looping state has stopped moving.
-    public var settleDuration: Double {
+    public var settleDuration: Double { blinkLead + stateSettle }
+
+    private var stateSettle: Double {
         switch state {
         case .idle, .thinking, .working, .listening: return turnTime
         case .needsYou: return turnTime + (reduceMotion ? 0 : hopTime)
@@ -79,23 +103,33 @@ public struct MarkMotion: Sendable {
     private var notedLead: Double { fromTurn > 0.01 ? turnTime : 0 }
 
     private struct DoneTimes {
-        var lead, blink, smile, back, end: Double
+        var lead, lapStart, lapTime, flare, back, end: Double
     }
 
-    /// Done: turn to the person, blink, smile, turn back. Played once.
+    /// Done, once: turn to the person, dim the ring, one bright lap round it, flare when the
+    /// loop closes, hold a beat, turn back.
     private var done: DoneTimes {
         let lead = abs(1 - fromTurn) < 0.01 ? 0 : turnTime
-        let blink = lead + 0.12            // a short beat after the turn
-        let smile = blink + 0.08 + 0.12 + 0.1
-        let back = smile + 0.3 + 0.5 + 0.35 + 0.1
-        return DoneTimes(lead: lead, blink: blink, smile: smile, back: back, end: back + turnTime)
+        let lapStart = lead + 0.15                    // the dim takes 150 ms
+        let lapTime = reduceMotion ? 0.2 : 0.55       // Reduce Motion: no lap, a short hold
+        let flare = lapStart + lapTime
+        let back = flare + 0.15 + 0.35                // flare and settle 150 ms, then a beat
+        return DoneTimes(lead: lead, lapStart: lapStart, lapTime: lapTime, flare: flare, back: back, end: back + turnTime)
     }
 
     // MARK: Frames
 
     public func frame(at now: Date) -> MarkFrame {
-        let t = max(0, now.timeIntervalSince(start))
+        let raw = max(0, now.timeIntervalSince(start))
+        let t = max(0, raw - blinkLead)
         var f = MarkFrame()
+
+        if blinksFirst {
+            // Blink: close in 80 ms, open in 120 ms.
+            let close = seg(raw, 0, 0.08)
+            let open = seg(raw, 0.08, 0.12)
+            f.blink = 1 - 0.92 * (close - open)
+        }
 
         switch state {
         case .idle:
@@ -155,12 +189,15 @@ public struct MarkMotion: Sendable {
             } else {
                 f.turn = 1 - ease(seg(t, d.back, turnTime))
             }
-            // Blink: close in 80 ms, open in 120 ms.
-            let close = seg(t, d.blink, 0.08)
-            let open = seg(t, d.blink + 0.08, 0.12)
-            f.blink = 1 - 0.92 * (close - open)
-            // Smile: in 300 ms, hold 500 ms, out 350 ms.
-            f.smile = ease(seg(t, d.smile, 0.3)) - ease(seg(t, d.smile + 0.3 + 0.5, 0.35))
+            // The ring dims to about 18 % until the loop closes.
+            f.dim = ease(seg(t, d.lead, 0.15)) - ease(seg(t, d.flare, 0.05))
+            // One lap, clockwise from 12 o'clock. The only time light travels round the ring.
+            if !reduceMotion {
+                f.lap = ease(seg(t, d.lapStart, d.lapTime))
+            }
+            // The loop closes: about 1.6x brightness and 6 % larger for 150 ms, then settle.
+            f.flare = ease(seg(t, d.flare, 0.05)) - ease(seg(t, d.flare + 0.05, 0.10))
+            f.glow = 1 + 1.2 * f.flare
         }
         return f
     }

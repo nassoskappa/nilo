@@ -77,8 +77,8 @@ The mark is a torus (a ring of light). Side-on, it looks like the cursor. Face-o
 | listening | turns face-on | stays face-on while the person speaks or types; slow pulse (1.8 s) plus a swell with voice level |
 | thinking | side-on | deeper, quicker breath (width +60 %, 2.2 s) with a soft brightness pulse, never below 70 % |
 | working | side-on | progress moves along the cursor edge. Never a spinning ring |
-| needs you | turns face-on | turns, one small hop on arrival (16 % of its height, 360 ms), then a perfectly still ring. No blink, no smile, no loop |
-| done | turns face-on | blink, then smile if the job went well, then turns back side-on |
+| needs you | turns face-on | turns, one small hop on arrival (16 % of its height, 360 ms), then a perfectly still ring. No blink, no loop |
+| done | turns face-on | "loop closes": ring dims to about 18 %, one bright lap round it, flare, a beat, turns back side-on. Plays once |
 | noted | side-on | quick quarter turn and back (a glance) |
 
 **Menu bar and panel share one motion.** The menu bar icon and the panel (and later the notch panel) draw from the same `MarkMotion` in NiloUI, so they never disagree. Tune numbers there, once.
@@ -86,23 +86,23 @@ The mark is a torus (a ring of light). Side-on, it looks like the cursor. Face-o
 **Menu bar rules.**
 - One colour, tinted by macOS. No cyan, no glow. Motion carries the state.
 - Idle is completely still. Nothing redraws.
-- Working, thinking and listening move all the time. Needs you hops once and holds still. Done plays turn, blink, smile, turn back once, then rests as a bar. Noted is one glance.
+- Working, thinking and listening move all the time. Needs you hops once and holds still. Done plays turn, dim, one lap, flare, turn back once, then rests as a bar (the lap is drawn at full opacity over the dimmed ring; the flare is only the 6 % size bump, since a template icon can't get brighter). Noted is one glance.
 - Loops move 1.5 times as far as in the panel, because the icon is only 18 pt.
 - The icon redraws about 30 times a second only while something moves, then stops.
 - Reduce Motion: cross-fade, no loops, no hop.
 
-**Blink.** The ring closes flat: scaleY from 1 to 0.08 and back. Close in about 80 ms, open in about 120 ms. Means "got it".
+**Blink.** The ring closes flat: scaleY from 1 to 0.08 and back. Close in about 80 ms, open in about 120 ms. Means "got it". It happens once, at the end of Listening, when the person has finished and Nilo moves on to its next state. It is not part of Done.
 
-**Smile.** The top of the ring dims to about 16 % opacity. The bottom stays at full brightness, as an arc with round ends (stroke line cap round), about 150 degrees wide. In 300 ms, hold 500 ms, out 350 ms. The whole ring stays visible. Never switch the top off, never draw a face, never use cheeks or a crescent. Only after a job that went well.
+**Done: the loop closes.** After the turn to face the person, the ring dims to about 18 % opacity (150 ms). A bright stroke with round ends (line cap round) draws once round the ring, clockwise from 12 o'clock, in about 550 ms with ease-in-out. When it meets itself the whole ring flares (about 1.6x brightness, 6 % larger) for 150 ms, settles, holds for a beat (about 350 ms), then turns back side-on. It runs exactly once. It never loops and never looks like a spinner. The lap is the only time light travels round the ring. (Working moves light along the cursor bar, side-on, never round the ring.)
 
-**Timing.** A turn in the UI takes 300 to 350 ms with ease-in-out. The slow, cinematic turn (about 1 s) is used only once: the first launch hello. A full turn-blink-smile sequence happens at most once per request.
+**Timing.** A turn in the UI takes 300 to 350 ms with ease-in-out. The slow, cinematic turn (about 1 s) is used only once: the first launch hello. The full Done sequence (turn, dim, lap, flare, turn back) happens at most once per request.
 
 **Never:**
-- No blink, smile or playfulness during an approval (send, change, delete). Approvals are for trust.
+- No blink, lap or playfulness during an approval (send, change, delete). Approvals are for trust.
 - The ring never stares. When face-on with no input, it does something small or turns back within 2 s. The one exception is needs you: it hops once on arrival, then holds still, because it is waiting for a decision and must not keep moving.
 - The ring never follows the pointer or the person's face.
 - No eyes, mouth or wink in the product. The literal face and the wink are for marketing film only.
-- Respect Reduce Motion: replace turns with a cross-fade, and keep blink and smile as short opacity changes.
+- Respect Reduce Motion: replace turns with a cross-fade, and keep the blink, the dim and the flare of Done as short opacity changes. There is no lap.
 
 **Rendering.** In the app the mark is flat (SwiftUI shapes, no 3D). Fake the turn with a horizontal scale of the ring plus a width change, so side-on it becomes the cursor bar. The glossy 3D character is for the app icon, the website and film, made by a 3D artist (Blender or Spline, and Icon Composer layers for the icon).
 

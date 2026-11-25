@@ -93,14 +93,17 @@ public struct MarkFrameView: View {
         let blinkNorm = (frame.blink - 0.08) / 0.92
 
         ZStack {
-            layers(smile: frame.smile)
+            layers(dim: frame.dim, lap: frame.lap)
                 .opacity(working ? 0.35 : 1)
             if let travel = frame.sweep {
-                layers(smile: 0)
+                layers(dim: 0, lap: 0)
                     .mask(sweep(travel))
             }
         }
         .scaleEffect(swell)
+        // The loop closes: 6 % larger, and (where there is colour) about 1.6x brighter.
+        .scaleEffect(reduceMotion ? 1 : 1 + 0.06 * frame.flare)
+        .brightness(glow ? 0.3 * frame.flare : 0)
         .scaleEffect(x: frame.sx, y: frame.sy)
         // Blink: the ring closes flat. With Reduce Motion it dips in brightness instead.
         .scaleEffect(y: reduceMotion ? 1 : frame.blink)
@@ -110,21 +113,20 @@ public struct MarkFrameView: View {
         .frame(width: canvas.width, height: canvas.height)
     }
 
-    /// The ring itself, plus the smile arc when there is one.
-    private func layers(smile: Double) -> some View {
+    /// The ring itself, dimmed to about 18 % during Done, plus the bright lap drawn over it.
+    private func layers(dim: Double, lap: Double) -> some View {
         ZStack {
             shape
-                // The top dims to 16 %. The whole ring stays visible.
-                .opacity(1 - 0.84 * smile)
-            if smile > 0 {
+                .opacity(1 - 0.82 * dim)
+            if lap > 0 {
                 let d = height * RingGeometry.ringDiameter
                 let line = height * RingGeometry.ringLine
                 Circle()
                     .inset(by: line / 2)
-                    .trim(from: 15.0 / 360, to: 165.0 / 360) // about 150 degrees, centred on the bottom
+                    .trim(from: 0, to: lap)
+                    .rotation(.degrees(-90)) // start at 12 o'clock, draw clockwise
                     .stroke(color, style: StrokeStyle(lineWidth: line, lineCap: .round))
                     .frame(width: d, height: d)
-                    .opacity(smile)
             }
         }
         .frame(width: height, height: height)
@@ -194,10 +196,10 @@ public struct MarkView: View {
             )
         }
         .animation(.easeOut(duration: 0.1), value: level)
-        .onAppear { if motion.reduceMotion != reduceMotion { restart(snap: false) } }
-        .onChange(of: state) { restart(snap: false) }
-        .onChange(of: replay) { restart(snap: true) }
-        .onChange(of: reduceMotion) { restart(snap: false) }
+        .onAppear { if motion.reduceMotion != reduceMotion { restart(snap: false, previous: nil) } }
+        .onChange(of: state) { old, _ in restart(snap: false, previous: old) }
+        .onChange(of: replay) { restart(snap: true, previous: nil) }
+        .onChange(of: reduceMotion) { restart(snap: false, previous: nil) }
         .task(id: motion.start) { await settle() }
         .accessibilityElement()
         .accessibilityLabel("Nilo")
@@ -205,10 +207,10 @@ public struct MarkView: View {
     }
 
     /// Begin the current state's motion. A turn carries on from where the ring is now.
-    private func restart(snap: Bool) {
+    private func restart(snap: Bool, previous: MarkState?) {
         let now = Date()
         let from = snap ? 0 : motion.frame(at: now).turn
-        motion = MarkMotion(state: state, profile: .panel, reduceMotion: reduceMotion, start: now, fromTurn: from)
+        motion = MarkMotion(state: state, profile: .panel, reduceMotion: reduceMotion, start: now, fromTurn: from, previous: previous)
         running = true
     }
 

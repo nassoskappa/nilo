@@ -35,20 +35,21 @@ final class MenuBarMark {
 
     func set(_ newState: MarkState) {
         guard newState != state else { return }
+        let old = state
         state = newState
-        begin(snap: false)
+        begin(snap: false, previous: old)
     }
 
     func replayNow() {
         replay += 1
-        begin(snap: true)
+        begin(snap: true, previous: nil)
     }
 
-    private func begin(snap: Bool) {
+    private func begin(snap: Bool, previous: MarkState?) {
         let now = Date()
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let from = snap ? 0 : motion.frame(at: now).turn
-        motion = MarkMotion(state: state, profile: .menuBar, reduceMotion: reduce, start: now, fromTurn: from)
+        motion = MarkMotion(state: state, profile: .menuBar, reduceMotion: reduce, start: now, fromTurn: from, previous: previous)
         run(reduceMotion: reduce)
     }
 
