@@ -187,7 +187,7 @@ struct NotchPanelView: View {
     private var field: some View {
         TextField("", text: $model.draft, prompt: Text("Ask Nilo to…").foregroundStyle(.white.opacity(0.45)))
             .textFieldStyle(.plain)
-            .font(.body)
+            .font(.title3)
             .foregroundStyle(.white)
             .tint(NiloColor.signature)
             .focused($fieldFocused)
@@ -205,7 +205,7 @@ struct NotchPanelView: View {
         let pending = model.voicePending
         let gap = settled.isEmpty || pending.isEmpty || settled.hasSuffix(" ") || pending.hasPrefix(" ") ? "" : " "
         return Text("\(Text(settled).foregroundStyle(.white))\(Text(gap + pending).foregroundStyle(.white.opacity(0.45)))")
-            .font(.body)
+            .font(.title3)
             .lineLimit(1)
             .truncationMode(.head)
             .accessibilityLabel("Heard: \(model.voiceText)")
@@ -217,27 +217,24 @@ struct NotchPanelView: View {
         case .echo(let request):
             VStack(alignment: .leading, spacing: 2) {
                 Text("\u{201C}\(request)\u{201D}")
-                    .font(.body)
+                    .font(.title3)
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Text("Got it. Nilo can't act on this yet.")
-                    .font(.callout)
+                    .font(.body)
                     .foregroundStyle(.white.opacity(0.55))
             }
         case .micOff:
-            HStack(spacing: 10) {
-                Text("Microphone is off. You can type.")
-                    .font(.callout)
-                    .foregroundStyle(.white.opacity(0.55))
-                    .fixedSize()
+            VStack(alignment: .leading, spacing: 2) {
+                notice("Microphone is off. You can type.")
                 Button("Turn on") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
                         NSWorkspace.shared.open(url)
                     }
                 }
                 .buttonStyle(.plain)
-                .font(.callout.weight(.medium))
+                .font(.body.weight(.medium))
                 .foregroundStyle(NiloColor.signature)
                 .fixedSize()
                 .accessibilityHint("Opens Privacy settings for the microphone")
@@ -255,7 +252,7 @@ struct NotchPanelView: View {
 
     private func notice(_ text: String) -> some View {
         Text(text)
-            .font(.callout)
+            .font(.body)
             .foregroundStyle(.white.opacity(0.55))
     }
 
