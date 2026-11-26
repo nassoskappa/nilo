@@ -22,6 +22,24 @@ public enum ToolRunError: Error, Sendable, Equatable {
     case duplicateTool(String)
     /// The tool itself failed while running.
     case failed(String, message: String)
+    /// Nilo has no access to this kind of data (calendar, contacts). The person can turn it on.
+    case noAccess(String)
+    /// A rule forbids this, e.g. writing outside the test calendar.
+    case notAllowed(String, reason: String)
+}
+
+/// Dates travel as ISO 8601 text with a time zone, the way a model writes them.
+public enum ToolJSON {
+    public static var decoder: JSONDecoder {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }
+    public static var encoder: JSONEncoder {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }
 }
 
 // MARK: - Registry
@@ -75,14 +93,14 @@ struct AnyTool: Sendable {
         prepare = { data, context in
             let input: T.Input
             do {
-                input = try JSONDecoder().decode(T.Input.self, from: data)
+                input = try ToolJSON.decoder.decode(T.Input.self, from: data)
             } catch {
                 throw ToolRunError.badArguments(T.name)
             }
             let preview = try await tool.preview(input, in: context)
             return PreparedStep(name: T.name, risk: T.risk, preview: preview) {
                 let output = try await tool.run(input, in: context)
-                let outputJSON = (try? JSONEncoder().encode(output)) ?? Data()
+                let outputJSON = (try? ToolJSON.encoder.encode(output)) ?? Data()
                 guard let undo else { return (outputJSON, nil) }
                 return (outputJSON, { try await undo(tool, input, output, context) })
             }
@@ -139,6 +157,9 @@ public struct JobResult: Sendable, Equatable {
     public var outcome: Outcome
     /// Steps that ran, in order.
     public var ran: [String]
+    /// What each step that ran returned, as JSON, by step id. A recipe reads these to fill in
+    /// the next steps.
+    public var outputs: [String: Data] = [:]
     /// True when some changes can be undone.
     public var canUndo: Bool
 }
@@ -181,6 +202,7 @@ public actor JobRunner {
 
         // 2. Run them, asking where the rules say so.
         var ran: [String] = []
+        var outputs: [String: Data] = [:]
         for (call, step) in steps {
             let shown = StepPreview(id: call.id, toolName: step.name, risk: step.risk, preview: step.preview)
             switch policy.decision(for: step.risk) {
@@ -190,22 +212,23 @@ public actor JobRunner {
                 events(.waitingForApproval(shown))
                 guard await approver.approve(shown) else {
                     events(.declined(id: call.id))
-                    return JobResult(outcome: .declined(id: call.id), ran: ran, canUndo: !undoStack.isEmpty)
+                    return JobResult(outcome: .declined(id: call.id), ran: ran, outputs: outputs, canUndo: !undoStack.isEmpty)
                 }
                 events(.started(shown))
             }
             do {
-                let (_, undo) = try await step.run()
+                let (output, undo) = try await step.run()
                 if let undo { undoStack.append((call.id, undo)) }
                 ran.append(call.id)
+                outputs[call.id] = output
                 events(.finished(id: call.id))
             } catch {
                 let failure = (error as? ToolRunError) ?? .failed(step.name, message: error.localizedDescription)
                 events(.failed(id: call.id, failure))
-                return JobResult(outcome: .failed(id: call.id, failure), ran: ran, canUndo: !undoStack.isEmpty)
+                return JobResult(outcome: .failed(id: call.id, failure), ran: ran, outputs: outputs, canUndo: !undoStack.isEmpty)
             }
         }
-        return JobResult(outcome: .completed, ran: ran, canUndo: !undoStack.isEmpty)
+        return JobResult(outcome: .completed, ran: ran, outputs: outputs, canUndo: !undoStack.isEmpty)
     }
 
     /// Takes back every change, newest first. Keeps going if one fails, and reports those.

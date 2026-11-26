@@ -93,13 +93,13 @@ The fur on the 3D character is a warmer orange than the amber light, and that's 
 
 **Menu bar and panel share one motion.** The menu bar icon and the panel (and later the notch panel) draw from the same `MarkMotion` in NiloUI, so they never disagree. Tune numbers there, once.
 
-**Notch panel.** Nilo lives in the notch: called, the notch grows down into a pure black panel (no border, no shadow); dismissed, it shrinks back. Without a notch it drops from the top centre under the menu bar. It never activates Nilo, so the app you're in keeps focus; it opens on the screen under the pointer, on every Space and over full-screen apps. Grow 350 ms soft spring, shrink 250 ms; Reduce Motion fades. Esc, a click outside, or switching apps closes it. Sizes live in `NotchGeometry` (Apps/macOS/NotchPanel.swift).
+**Notch panel.** Nilo lives in the notch: called, the notch grows down into a pure black panel (no border, no shadow); dismissed, it shrinks back. Without a notch it drops from the top centre under the menu bar. It never activates Nilo, so the app you're in keeps focus; it opens on the screen under the pointer, on every Space and over full-screen apps. Grow 350 ms soft spring, shrink 250 ms; Reduce Motion fades. Esc, a click outside, or switching apps closes it, except while a job is working (a macOS permission question counts as switching apps). A reply never resizes a closed panel: that sends AppKit into a layout loop. Sizes live in `NotchGeometry` (Apps/macOS/NotchPanel.swift).
 
 **Global shortcut.** Option-Space opens and closes the panel from any app (Control-Option-Space if another app has Option-Space). It uses the system hot key service: sandbox-safe, no Accessibility permission. A "record your own shortcut" setting comes with Settings. Hold it to talk: letting go means "got it" at once.
 
 **Listening.** Opening the panel means listening: the ring faces you and swells with your voice (Reduce Motion: it brightens instead). The mic is on only while in Listening, so the orange dot means exactly that. Nothing is recorded or kept: loudness is measured and speech becomes text on the Mac (Apple's SpeechAnalyzer), then the sound is dropped. Words appear live in the field, settled in white, still being worked out in grey. About 1.2 s of quiet after speech is "got it": one blink, mic off, Thinking. For now a short Thinking, then Done once, then Idle stands in for real work. "Got it" sends the words heard; no words: "Didn't catch that. Try again, or type." Typing also counts as listening: the first key turns the mic off and moves the words heard so far into the field to edit; Return is "got it". Mic denied: "Microphone is off. You can type." with a Turn on button. Voice tuning lives in `VoiceActivity` (NiloCore).
 
-**Menu bar icon.** Left-click toggles the panel; right-click or Control-click shows Open Nilo (with the shortcut) and Quit. Hidden test keys while the panel is open: Tab next state, Shift-Tab previous, Command-R play again (Space and letters type into the field).
+**Menu bar icon.** Left-click toggles the panel; right-click or Control-click shows Open Nilo (with the shortcut) and Quit. Hidden test keys while the panel is open: Tab next state, Shift-Tab previous, Command-R play again, Command-T calendar test job (adds "Nilo test" in the first free 30 minutes tomorrow), Command-Shift-T undo it (Space and letters type into the field).
 
 **Menu bar rules.**
 - One colour, tinted by macOS. No amber, no glow. Motion carries the state.
@@ -150,7 +150,7 @@ Short sentences, plain words, lead with the result. "Done. Thursday's clear afte
   - [x] 2a. Ask by typing: a real text field in the panel; Return sends; the panel grows for a reply
   - [x] 2b. Ask by voice: on-device speech to text, words appear live, "got it" sends
   - [x] 2c. The tool runner: runs tools through `ApprovalPolicy`, tested with pretend tools
-  - [ ] 2d. Calendar and contacts tools: free time, add event, move event, find person
+  - [x] 2d. Calendar and contacts tools: free time, add event, move event, find person
   - [ ] 2e. Messages and WhatsApp tools: compose sheet or prefilled link, the person taps Send
   - [ ] 2f. Understanding requests: the on-device model fills in a job's blanks
   - [ ] 2g. The plan card: the plan before acting, previews, exact text and recipients, approve

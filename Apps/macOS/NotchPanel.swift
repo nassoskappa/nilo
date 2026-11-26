@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import NiloCore
 import NiloUI
 
 // Nilo lives in the notch. Called, the notch grows down into a black panel. Dismissed, it
@@ -143,6 +144,10 @@ final class NotchPanelModel {
         case voiceUnsupported
         /// "Got it" came with no words.
         case notHeard
+        /// What a job did, result first.
+        case result(String)
+        /// Nilo has no calendar access. Turn on opens Privacy settings.
+        case calendarOff
     }
 
     @ObservationIgnored var onType: () -> Void = {}
@@ -228,17 +233,18 @@ struct NotchPanelView: View {
         case .micOff:
             VStack(alignment: .leading, spacing: 2) {
                 notice("Microphone is off. You can type.")
-                Button("Turn on") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                .buttonStyle(.plain)
-                .font(.body.weight(.medium))
-                .foregroundStyle(NiloColor.signature)
-                .fixedSize()
-                .accessibilityHint("Opens Privacy settings for the microphone")
+                turnOn("Privacy_Microphone", hint: "Opens Privacy settings for the microphone")
             }
+        case .calendarOff:
+            VStack(alignment: .leading, spacing: 2) {
+                notice("Nilo can't see your calendar.")
+                turnOn("Privacy_Calendars", hint: "Opens Privacy settings for calendars")
+            }
+        case .result(let text):
+            Text(text)
+                .font(.title3)
+                .foregroundStyle(.white)
+                .lineLimit(2)
         case .micMissing:
             notice("No microphone found. You can type.")
         case .voicePreparing:
@@ -248,6 +254,20 @@ struct NotchPanelView: View {
         case .notHeard:
             notice("Didn't catch that. Try again, or type.")
         }
+    }
+
+    /// Opens the right page of Privacy & Security settings.
+    private func turnOn(_ page: String, hint: String) -> some View {
+        Button("Turn on") {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(page)") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        .buttonStyle(.plain)
+        .font(.body.weight(.medium))
+        .foregroundStyle(NiloColor.signature)
+        .fixedSize()
+        .accessibilityHint(hint)
     }
 
     private func notice(_ text: String) -> some View {
@@ -326,6 +346,11 @@ final class NotchPanelController {
     private let panel = NotchPanel()
     private let mic = Microphone()
     private let transcriber = Transcriber()
+    /// The real calendars and contacts. Asks for access the first time a tool needs it.
+    private let calendar = EventKitCalendar()
+    private let contacts = ContactsBook()
+    /// The runner behind the Command-T test job, kept so Command-Shift-T can undo it.
+    private var testRunner: JobRunner?
     /// True while spoken words are being turned into text for this request.
     private var voiceOn = false
     /// The prototype's stand-in for real work: Thinking, then Done, then Idle.
@@ -455,7 +480,10 @@ final class NotchPanelController {
             demo?.cancel()
             mark.set(.listening)
         }
-        if case .echo = model.reply { setReply(nil) }
+        switch model.reply {
+        case .echo, .result: setReply(nil)
+        default: break
+        }
     }
 
     /// Return: send what was typed.
@@ -499,6 +527,11 @@ final class NotchPanelController {
     /// Show or clear the reply. The window grows first and the shape follows, or the shape
     /// shrinks first and the window follows, so nothing is ever cut off.
     private func setReply(_ reply: NotchPanelModel.Reply?) {
+        // Closed or closing: never resize a hidden window (it sends AppKit into a layout loop).
+        guard model.visible, model.expanded else {
+            model.reply = reply
+            return
+        }
         let wasTall = model.reply != nil, tall = reply != nil
         if tall, !wasTall {
             panel.setFrame(model.geometry.windowFrame(on: screen, tall: true), display: true)
@@ -514,6 +547,95 @@ final class NotchPanelController {
                 self.panel.setFrame(self.model.geometry.windowFrame(on: self.screen, tall: false), display: true)
             }
         }
+    }
+
+    // MARK: Jobs
+
+    /// Every tool Nilo can run. Send and delete tools come in 2e; until the plan card (2g) can
+    /// ask, nothing is approved.
+    private func makeRunner() -> JobRunner {
+        var registry = ToolRegistry()
+        try? registry.register(FreeTimeTool(store: calendar))
+        try? registry.register(FindEventsTool(store: calendar))
+        try? registry.register(AddEventTool(store: calendar))
+        try? registry.register(MoveEventTool(store: calendar))
+        try? registry.register(FindPersonTool(store: contacts))
+        return JobRunner(registry: registry, approver: NothingApprovedYet(), context: ToolContext(platform: .macOS))
+    }
+
+    /// Hidden test (Command-T): find the first free 30 minutes tomorrow and add "Nilo test"
+    /// there, in the Nilo Test calendar.
+    private func runCalendarTest() {
+        stopListening()
+        model.draft = ""
+        mark.set(.working)
+        let runner = makeRunner()
+        testRunner = runner
+        demo = Task { @MainActor [weak self] in
+            let cal = Calendar.current
+            let tomorrow = cal.startOfDay(for: cal.date(byAdding: .day, value: 1, to: .now) ?? .now)
+            let dayAfter = cal.date(byAdding: .day, value: 1, to: tomorrow) ?? tomorrow
+            let find = await runner.run([Self.call("free", FreeTimeTool.name, FreeTimeTool.Input(from: tomorrow, to: dayAfter, minutes: 30))])
+            guard let self, !Task.isCancelled else { return }
+            guard find.outcome == .completed,
+                  let data = find.outputs["free"],
+                  let free = try? ToolJSON.decoder.decode(FreeTimeTool.Output.self, from: data) else {
+                return self.finishJob(self.reply(for: find.outcome), done: false)
+            }
+            guard let slot = free.slots.first else {
+                return self.finishJob(.result("No free 30 minutes tomorrow."), done: false)
+            }
+            let end = slot.start.addingTimeInterval(30 * 60)
+            let add = await runner.run([Self.call("add", AddEventTool.name, EventDraft(title: "Nilo test", start: slot.start, end: end))])
+            guard !Task.isCancelled else { return }
+            guard add.outcome == .completed else { return self.finishJob(self.reply(for: add.outcome), done: false) }
+            self.finishJob(.result("Added Nilo test, \(WhenText.range(slot.start, end))."), done: true)
+        }
+    }
+
+    /// Hidden test (Command-Shift-T): undo the test job.
+    private func undoCalendarTest() {
+        stopListening()
+        guard let runner = testRunner else { return finishJob(.result("Nothing to undo."), done: false) }
+        testRunner = nil
+        mark.set(.working)
+        demo = Task { @MainActor [weak self] in
+            let failures = await runner.undoAll()
+            guard let self, !Task.isCancelled else { return }
+            self.finishJob(.result(failures.isEmpty ? "Removed Nilo test." : "Couldn't undo that."), done: failures.isEmpty)
+        }
+    }
+
+    /// Show what happened. Done plays only when the job finished.
+    private func finishJob(_ reply: NotchPanelModel.Reply, done: Bool) {
+        setReply(reply)
+        mark.set(done ? .done : .idle)
+        guard done else { return }
+        demo = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2.2))
+            guard let self, !Task.isCancelled, self.mark.state == .done else { return }
+            self.mark.set(.idle)
+        }
+    }
+
+    private func reply(for outcome: JobResult.Outcome) -> NotchPanelModel.Reply {
+        let error: ToolRunError
+        switch outcome {
+        case .completed: return .result("Done.")
+        case .declined: return .result("Stopped. Nothing was sent.")
+        case .refused(let e), .failed(_, let e): error = e
+        }
+        switch error {
+        case .noAccess("calendar"): return .calendarOff
+        case .noAccess: return .result("Nilo can't see your contacts.")
+        case .notAllowed(_, let reason): return .result(reason)
+        case .failed(_, let message): return .result("That didn't work. \(message)")
+        default: return .result("That didn't work.")
+        }
+    }
+
+    private static func call<T: Encodable>(_ id: String, _ tool: String, _ input: T) -> ToolCall {
+        ToolCall(id: id, toolName: tool, argumentsJSON: (try? ToolJSON.encoder.encode(input)) ?? Data())
     }
 
     private func stopListening() {
@@ -602,7 +724,9 @@ final class NotchPanelController {
         for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification] {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, !self.askingPermission else { return }
+                    // A permission question from macOS counts as switching apps. Don't close for
+                    // it, or in the middle of a job.
+                    guard let self, !self.askingPermission, self.mark.state != .working else { return }
                     self.close()
                 }
             })
@@ -622,7 +746,8 @@ final class NotchPanelController {
     }
 
     /// Esc closes. Every other key goes to the text field, except the hidden test keys:
-    /// Tab next state, Shift-Tab previous, Command-R play again.
+    /// Tab next state, Shift-Tab previous, Command-R play again, Command-T calendar test job,
+    /// Command-Shift-T undo it.
     private func handleKey(code: UInt16, chars: String?, shift: Bool, command: Bool) -> Bool {
         switch code {
         case 53: close()                          // Esc
@@ -630,8 +755,12 @@ final class NotchPanelController {
             stopListening()
             mark.step(shift ? -1 : 1)
         default:
-            guard command, chars == "r" else { return false }
-            mark.replayNow()
+            guard command else { return false }
+            switch chars {
+            case "r": mark.replayNow()
+            case "t": shift ? undoCalendarTest() : runCalendarTest()
+            default: return false
+            }
         }
         return true
     }
@@ -651,4 +780,9 @@ func joinWords(_ a: String, _ b: String) -> String {
     if b.isEmpty { return a.trimmingCharacters(in: .whitespaces) }
     let gap = a.hasSuffix(" ") || b.hasPrefix(" ") ? "" : " "
     return (a + gap + b).trimmingCharacters(in: .whitespaces)
+}
+
+/// Until the plan card (2g) can ask the person, nothing that needs a yes is approved.
+struct NothingApprovedYet: Approver {
+    func approve(_ step: StepPreview) async -> Bool { false }
 }

@@ -38,11 +38,15 @@ targets:
         LSUIElement: true                # menu bar app, no Dock icon
         NSSpeechRecognitionUsageDescription: Nilo turns what you say into text on this Mac. Nothing leaves it.
         NSMicrophoneUsageDescription: Nilo listens when you call it, so it can hear what you ask.
+        NSCalendarsFullAccessUsageDescription: Nilo finds free time and adds or moves meetings when you ask. While Nilo is in testing it only changes its own Nilo Test calendar.
+        NSContactsUsageDescription: Nilo looks up the people you name, so it can tell them about a meeting.
     entitlements:
       path: Apps/macOS/Nilo.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.device.audio-input: true
+        com.apple.security.personal-information.calendars: true
+        com.apple.security.personal-information.addressbook: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(NILO_BUNDLE_ID_PREFIX).nilo
