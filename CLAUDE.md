@@ -42,6 +42,8 @@ Platforms: macOS 26, iOS 26 and later, Swift 6 with strict concurrency, SwiftUI 
 ## Architecture rules
 
 - **Providers.** Every model sits behind `ModelProvider`. Three providers: `onDevice` (Apple Foundation Models, free), `claudeOwnKey` (user's API key, v1), `claudeCredits` (our proxy, later). The UI never knows which one answered.
+- **Jobs are recipes (Phase 2).** Each v1 job is a fixed recipe in code (find the person, check the time, add the event, prepare the message). The on-device model only fills in the blanks. Nilo never improvises an action it wasn't built for. Claude may take open-ended requests from Phase 3.
+- **Test calendar.** Until TestFlight, Nilo writes only to a calendar named "Nilo Test", which it creates. It may read all calendars.
 - **Router.** On-device first. Escalate to Claude for multi-step jobs, long documents, writing sent as the user, or low confidence. No key: stay on device and say once what Claude would add. Rules live in one plain table in code.
 - **Tools.** Each action is one `AssistantTool`, defined once in NiloKit and exposed as a Claude tool, a Foundation Models tool and an App Intent. Every job gets App Shortcut phrases starting "Ask Nilo to…".
 - **Approvals.** Providers never run actions. The app runs them through `ApprovalPolicy`. `.read` runs at once, `.change` shows a preview with undo, `.send` and `.delete` always ask and show the exact text, recipients or items. No setting lowers this.
@@ -87,9 +89,9 @@ The mark is a torus (a ring of light). Side-on, it looks like the cursor. Face-o
 
 **Global shortcut.** Option-Space opens and closes the panel from any app (Control-Option-Space if another app has Option-Space). It uses the system hot key service: sandbox-safe, no Accessibility permission. A "record your own shortcut" setting comes with Settings. Hold it to talk: letting go means "got it" at once.
 
-**Listening.** Opening the panel means listening: the ring faces you and swells with your voice (Reduce Motion: it brightens instead). The mic is on only while in Listening, so the orange dot means exactly that. Nothing is recorded or kept, only loudness is measured. About 1.2 s of quiet after speech is "got it": one blink, mic off, Thinking. For now a short Thinking, then Done once, then Idle stands in for real work. Mic denied: "Microphone is off." with a Turn on button. Voice tuning lives in `VoiceActivity` (NiloCore).
+**Listening.** Opening the panel means listening: the ring faces you and swells with your voice (Reduce Motion: it brightens instead). The mic is on only while in Listening, so the orange dot means exactly that. Nothing is recorded or kept, only loudness is measured. About 1.2 s of quiet after speech is "got it": one blink, mic off, Thinking. For now a short Thinking, then Done once, then Idle stands in for real work. Typing also counts as listening: the first key turns the mic off, Return is "got it". Mic denied: "Microphone is off. You can type." with a Turn on button. Voice tuning lives in `VoiceActivity` (NiloCore).
 
-**Menu bar icon.** Left-click toggles the panel; right-click or Control-click shows Open Nilo (with the shortcut) and Quit. Hidden test keys while the panel is open: Space next state, Shift-Space previous, R play again.
+**Menu bar icon.** Left-click toggles the panel; right-click or Control-click shows Open Nilo (with the shortcut) and Quit. Hidden test keys while the panel is open: Tab next state, Shift-Tab previous, Command-R play again (Space and letters type into the field).
 
 **Menu bar rules.**
 - One colour, tinted by macOS. No cyan, no glow. Motion carries the state.
@@ -137,6 +139,15 @@ Short sentences, plain words, lead with the result. "Done. Thursday's clear afte
   - [x] 1c. A global keyboard shortcut that calls Nilo from anywhere
   - [x] 1d. Mic-driven listening: the ring reacts to the voice level
 - [ ] 2. Mac core: tools for calendar, contacts, Messages, WhatsApp; on-device router; plan card; jobs 1 and 2
+  - [x] 2a. Ask by typing: a real text field in the panel; Return sends; the panel grows for a reply
+  - [ ] 2b. Ask by voice: on-device speech to text, words appear live, "got it" sends
+  - [ ] 2c. The tool runner: runs tools through `ApprovalPolicy`, tested with pretend tools
+  - [ ] 2d. Calendar and contacts tools: free time, add event, move event, find person
+  - [ ] 2e. Messages and WhatsApp tools: compose sheet or prefilled link, the person taps Send
+  - [ ] 2f. Understanding requests: the on-device model fills in a job's blanks
+  - [ ] 2g. The plan card: the plan before acting, previews, exact text and recipients, approve
+  - [ ] 2h. Job 1 end to end, with its "Ask Nilo to…" phrase
+  - [ ] 2i. Job 2 end to end, with its "Ask Nilo to…" phrase
 - [ ] 3. Claude own-key provider, spend meter, memory
 - [ ] 4. Mail: Gmail, iCloud IMAP, reminders, Google invites; jobs 5 and 3
 - [ ] 5. Files: Spotlight, iCloud links; job 4

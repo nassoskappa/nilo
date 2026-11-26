@@ -19,6 +19,9 @@ import NiloUI
 struct NotchGeometry: Equatable {
     /// The open panel, including the notch strip at the top.
     static let openSize = CGSize(width: 360, height: 120)
+    /// Extra height under the request when there's a reply or a notice.
+    static let replyHeight: CGFloat = 64
+    static func openHeight(tall: Bool) -> CGFloat { openSize.height + (tall ? replyHeight : 0) }
     /// Extra room in the window so the spring can overshoot without being cut off.
     static let margin = CGSize(width: 24, height: 16)
 
@@ -53,8 +56,8 @@ struct NotchGeometry: Equatable {
         open ? 26 : (hasNotch ? 10 : 16)
     }
 
-    func size(open: Bool) -> CGSize {
-        if open { return Self.openSize }
+    func size(open: Bool, tall: Bool = false) -> CGSize {
+        if open { return CGSize(width: Self.openSize.width, height: Self.openHeight(tall: tall)) }
         // Closed: exactly the notch, plus its shoulders. Without a notch: a small pill.
         return hasNotch
             ? CGSize(width: notch.width + 2 * shoulder(open: false), height: notch.height)
@@ -62,9 +65,9 @@ struct NotchGeometry: Equatable {
     }
 
     /// Where the window sits on the screen, in screen coordinates.
-    func windowFrame(on screen: NSScreen) -> NSRect {
+    func windowFrame(on screen: NSScreen, tall: Bool = false) -> NSRect {
         let width = Self.openSize.width + Self.margin.width
-        let height = Self.openSize.height + Self.margin.height
+        let height = Self.openHeight(tall: tall) + Self.margin.height
         let top = screen.frame.maxY - topInset
         return NSRect(x: screen.frame.midX - width / 2, y: top - height, width: width, height: height)
     }
@@ -118,15 +121,22 @@ final class NotchPanelModel {
     var visible = false
     var reduceMotion = false
     var geometry: NotchGeometry
-    /// Shown instead of "Ask Nilo to…" when Nilo can't hear.
-    var micProblem: MicProblem?
+    /// What the person is typing.
+    var draft = ""
+    /// Shown under the request. The panel grows to make room.
+    var reply: Reply?
 
-    enum MicProblem {
-        /// The person said no to the microphone.
-        case off
-        /// No microphone, or it would not start.
-        case missing
+    enum Reply: Equatable {
+        /// What Nilo understood. Until it can act (Phase 2 steps to come), it says so.
+        case echo(String)
+        /// The person said no to the microphone. Typing still works.
+        case micOff
+        /// No microphone, or it would not start. Typing still works.
+        case micMissing
     }
+
+    @ObservationIgnored var onType: () -> Void = {}
+    @ObservationIgnored var onSubmit: (String) -> Void = { _ in }
 
     init(geometry: NotchGeometry) {
         self.geometry = geometry
@@ -134,14 +144,15 @@ final class NotchPanelModel {
 }
 
 struct NotchPanelView: View {
-    var model: NotchPanelModel
+    @Bindable var model: NotchPanelModel
     var mark: MenuBarMark
+    @FocusState private var fieldFocused: Bool
 
     var body: some View {
         let g = model.geometry
         // With Reduce Motion the shape stays full size and the whole panel fades.
         let open = model.expanded || model.reduceMotion
-        let size = g.size(open: open)
+        let size = g.size(open: open, tall: model.reply != nil)
         let shape = NotchShape(shoulder: g.shoulder(open: open), bottom: g.bottomRadius(open: open), hasNotch: g.hasNotch)
         let fades = model.reduceMotion || !g.hasNotch
 
@@ -158,41 +169,64 @@ struct NotchPanelView: View {
             }
             .clipShape(shape)
             .opacity(fades && !model.expanded ? 0 : 1)
+            .onChange(of: model.expanded) { _, open in if open { fieldFocused = true } }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    /// Where the person types. Return sends.
+    private var field: some View {
+        TextField("", text: $model.draft, prompt: Text("Ask Nilo to…").foregroundStyle(.white.opacity(0.45)))
+            .textFieldStyle(.plain)
+            .font(.body)
+            .foregroundStyle(.white)
+            .tint(NiloColor.signature)
+            .focused($fieldFocused)
+            .onSubmit { model.onSubmit(model.draft) }
+            .onChange(of: model.draft) { _, text in if !text.isEmpty { model.onType() } }
+            .accessibilityLabel("Ask Nilo")
+    }
+
     @ViewBuilder
-    private var prompt: some View {
-        switch model.micProblem {
-        case nil:
-            Text("Ask Nilo to…")
-                .font(.body)
-                .foregroundStyle(.white.opacity(0.55))
-        case .off:
-            HStack(spacing: 10) {
-                Text("Microphone is off.")
+    private func replyView(_ reply: NotchPanelModel.Reply) -> some View {
+        switch reply {
+        case .echo(let request):
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\u{201C}\(request)\u{201D}")
                     .font(.body)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text("Got it. Nilo can't act on this yet.")
+                    .font(.callout)
                     .foregroundStyle(.white.opacity(0.55))
+            }
+        case .micOff:
+            HStack(spacing: 10) {
+                Text("Microphone is off. You can type.")
+                    .font(.callout)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .fixedSize()
                 Button("Turn on") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
                         NSWorkspace.shared.open(url)
                     }
                 }
                 .buttonStyle(.plain)
-                .font(.body.weight(.medium))
+                .font(.callout.weight(.medium))
                 .foregroundStyle(NiloColor.signature)
                 .accessibilityHint("Opens Privacy settings for the microphone")
             }
-        case .missing:
-            Text("No microphone found.")
-                .font(.body)
+        case .micMissing:
+            Text("No microphone found. You can type.")
+                .font(.callout)
                 .foregroundStyle(.white.opacity(0.55))
         }
     }
 
     /// Always laid out at full size. The growing shape reveals it.
     private func content(_ g: NotchGeometry) -> some View {
-        VStack(spacing: 0) {
+        let inset = 22 + g.shoulder(open: true)
+        return VStack(alignment: .leading, spacing: 0) {
             Color.clear.frame(height: g.notch.height)
             HStack(spacing: 14) {
                 MarkView(state: mark.state, level: mark.level, height: 34, replay: mark.replay)
@@ -202,14 +236,25 @@ struct NotchPanelView: View {
                         .font(NiloFont.mono(11))
                         .tracking(1)
                         .foregroundStyle(NiloColor.needsYou)
-                    prompt
+                    field
                 }
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 22 + g.shoulder(open: true))
-            .frame(maxHeight: .infinity)
+            .padding(.horizontal, inset)
+            .frame(height: NotchGeometry.openSize.height - g.notch.height)
+
+            if let reply = model.reply {
+                // Lines up with the text above, under the ring's column.
+                replyView(reply)
+                    .padding(.leading, inset + 44 + 14)
+                    .padding(.trailing, inset)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, -8)
+                    .frame(height: NotchGeometry.replyHeight, alignment: .top)
+                    .transition(.opacity)
+            }
         }
-        .frame(width: NotchGeometry.openSize.width, height: NotchGeometry.openSize.height)
+        .frame(width: NotchGeometry.openSize.width, height: NotchGeometry.openHeight(tall: model.reply != nil), alignment: .top)
+        .onAppear { fieldFocused = true }
     }
 }
 
@@ -254,6 +299,8 @@ final class NotchPanelController {
     private var observers: [NSObjectProtocol] = []
     /// Bumped on every open and close, so a late "order out" never hides a panel just reopened.
     private var generation = 0
+    /// The screen the panel is on, for resizing when a reply appears.
+    private var screen: NSScreen = .underPointer
 
     init(mark: MenuBarMark) {
         self.mark = mark
@@ -264,6 +311,8 @@ final class NotchPanelController {
 
         mic.onLevel = { [weak mark] level in mark?.level = level }
         mic.onFinished = { [weak self] in self?.gotIt() }
+        model.onType = { [weak self] in self?.typing() }
+        model.onSubmit = { [weak self] text in self?.submit(text) }
     }
 
     // MARK: The shortcut: tap to open and close, hold to talk
@@ -292,7 +341,6 @@ final class NotchPanelController {
     /// Opening means listening: turn to the person and switch the mic on.
     private func startListening(generation gen: Int) {
         demo?.cancel()
-        model.micProblem = nil
         mark.set(.listening)
         askingPermission = true
         Task { @MainActor [weak self] in
@@ -306,15 +354,35 @@ final class NotchPanelController {
             }
             switch result {
             case .listening: break
-            case .denied: self.model.micProblem = .off
-            case .unavailable: self.model.micProblem = .missing
+            case .denied: self.setReply(.micOff)
+            case .unavailable: self.setReply(.micMissing)
             }
         }
     }
 
+    /// The person is typing: Listening (facing them), mic off, and a new request clears the
+    /// last reply.
+    private func typing() {
+        if mic.isOn { mic.stop() }
+        if mark.state != .listening {
+            demo?.cancel()
+            mark.set(.listening)
+        }
+        if case .echo = model.reply { setReply(nil) }
+    }
+
+    /// Return: send what was typed.
+    private func submit(_ text: String) {
+        let request = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !request.isEmpty else { return }
+        model.draft = ""
+        gotIt(request: request)
+    }
+
     /// "Got it": the person has finished. The mic goes off, the ring blinks and turns back to
-    /// the task. For now a short Thinking, then Done once, then Idle stands in for real work.
-    private func gotIt() {
+    /// the task. For now a short Thinking, then the reply and Done once, then Idle stand in for
+    /// real work.
+    private func gotIt(request: String? = nil) {
         guard mark.state == .listening else { return }
         mic.stop()
         mark.set(.thinking)
@@ -322,10 +390,31 @@ final class NotchPanelController {
         demo = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
             guard let self, !Task.isCancelled, self.mark.state == .thinking else { return }
+            if let request { self.setReply(.echo(request)) }
             self.mark.set(.done)
             try? await Task.sleep(for: .seconds(2.2))
             guard !Task.isCancelled, self.mark.state == .done else { return }
             self.mark.set(.idle)
+        }
+    }
+
+    /// Show or clear the reply. The window grows first and the shape follows, or the shape
+    /// shrinks first and the window follows, so nothing is ever cut off.
+    private func setReply(_ reply: NotchPanelModel.Reply?) {
+        let wasTall = model.reply != nil, tall = reply != nil
+        if tall, !wasTall {
+            panel.setFrame(model.geometry.windowFrame(on: screen, tall: true), display: true)
+        }
+        withAnimation(model.reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.35, bounce: 0.15)) {
+            model.reply = reply
+        }
+        if wasTall, !tall {
+            let gen = generation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(0.4))
+                guard let self, self.generation == gen, self.model.reply == nil else { return }
+                self.panel.setFrame(self.model.geometry.windowFrame(on: self.screen, tall: false), display: true)
+            }
         }
     }
 
@@ -343,7 +432,10 @@ final class NotchPanelController {
         generation += 1
         let gen = generation
         let screen = NSScreen.underPointer
+        self.screen = screen
         model.geometry = NotchGeometry(screen: screen)
+        model.reply = nil
+        model.draft = ""
         model.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         model.expanded = false
         model.visible = true
@@ -397,8 +489,10 @@ final class NotchPanelController {
             let code = event.keyCode
             let chars = event.charactersIgnoringModifiers?.lowercased()
             let shift = event.modifierFlags.contains(.shift)
-            guard event.modifierFlags.isDisjoint(with: [.option, .control, .command]) else { return event }
-            let handled = MainActor.assumeIsolated { self?.handleKey(code: code, chars: chars, shift: shift) ?? false }
+            let command = event.modifierFlags.contains(.command)
+            let handled = MainActor.assumeIsolated {
+                self?.handleKey(code: code, chars: chars, shift: shift, command: command) ?? false
+            }
             return handled ? nil : event
         }) { monitors.append(m) }
 
@@ -426,15 +520,16 @@ final class NotchPanelController {
         observers.removeAll()
     }
 
-    /// Esc closes. Hidden test keys: Space next state, Shift-Space previous, R play again.
-    private func handleKey(code: UInt16, chars: String?, shift: Bool) -> Bool {
+    /// Esc closes. Every other key goes to the text field, except the hidden test keys:
+    /// Tab next state, Shift-Tab previous, Command-R play again.
+    private func handleKey(code: UInt16, chars: String?, shift: Bool, command: Bool) -> Bool {
         switch code {
         case 53: close()                          // Esc
-        case 49:                                  // Space
+        case 48:                                  // Tab
             stopListening()
             mark.step(shift ? -1 : 1)
         default:
-            guard chars == "r" else { return false }
+            guard command, chars == "r" else { return false }
             mark.replayNow()
         }
         return true
