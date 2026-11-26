@@ -153,12 +153,15 @@ final class NotchPanelModel {
         case calendarOff
         /// Nilo has no contacts access. Turn on opens Privacy settings.
         case contactsOff
-        /// A send or delete waiting for the person: the exact text and everyone it goes to.
+        /// A single send or delete asked again (a plan step that changed after the card).
         case approval(StepPreview)
+        /// The plan card: every step before acting, then progress and Undo.
+        case plan(PlanCard)
 
         var height: CGFloat {
             switch self {
             case .approval(let step): return ApprovalLayout.height(step.preview)
+            case .plan(let card): return PlanCardLayout.height(card)
             case .understood(let headline, let details): return ApprovalLayout.height(headline: headline, details: details)
             default: return NotchGeometry.replyHeight
             }
@@ -170,6 +173,7 @@ final class NotchPanelModel {
 
     @ObservationIgnored var onType: () -> Void = {}
     @ObservationIgnored var onAnswer: (Bool) -> Void = { _ in }
+    @ObservationIgnored var onUndo: () -> Void = {}
     @ObservationIgnored var onSubmit: (String) -> Void = { _ in }
 
     init(geometry: NotchGeometry) {
@@ -205,6 +209,7 @@ struct NotchPanelView: View {
             .opacity(fades && !model.expanded ? 0 : 1)
             .onChange(of: model.expanded) { _, open in if open { fieldFocused = true } }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .ignoresSafeArea()
     }
 
     /// Where the person types. Return sends.
@@ -281,6 +286,11 @@ struct NotchPanelView: View {
             }
         case .approval(let step):
             approvalView(step)
+        case .plan(let card):
+            PlanCardView(card: card,
+                         onDoIt: { model.onAnswer(true) },
+                         onCancel: { model.onAnswer(false) },
+                         onUndo: { model.onUndo() })
         case .result(let text):
             Text(text)
                 .font(.title3)
@@ -461,8 +471,11 @@ final class NotchPanelController {
     private let reader = OnDeviceReader()
     /// The runner behind the Command-T test job, kept so Command-Shift-T can undo it.
     private var testRunner: JobRunner?
-    /// A send or delete waiting for the person's answer.
+    /// A plan card or a send waiting for the person's answer.
     private var pendingApproval: CheckedContinuation<Bool, Never>?
+    /// The plan on the card, and the runner that ran it (kept for Undo).
+    private var planCard: PlanCard?
+    private var planRunner: JobRunner?
     /// True while spoken words are being turned into text for this request.
     private var voiceOn = false
     /// The prototype's stand-in for real work: Thinking, then Done, then Idle.
@@ -482,9 +495,19 @@ final class NotchPanelController {
     init(mark: MenuBarMark) {
         self.mark = mark
         model = NotchPanelModel(geometry: NotchGeometry(screen: .underPointer))
+        // Only Nilo sizes this window. When the SwiftUI view is the window's own content view,
+        // SwiftUI also resizes the window during animations, the two fight, and AppKit crashes
+        // with an endless layout loop. So the SwiftUI view sits inside a plain container that
+        // simply follows the window, and ignores the notch's safe area (Nilo draws round it).
         let host = NSHostingView(rootView: NotchPanelView(model: model, mark: mark))
         host.sizingOptions = []
-        panel.contentView = host
+        host.safeAreaRegions = []
+        host.translatesAutoresizingMaskIntoConstraints = true
+        host.autoresizingMask = [.width, .height]
+        let container = NSView()
+        host.frame = container.bounds
+        container.addSubview(host)
+        panel.contentView = container
 
         mic.onLevel = { [weak mark] level in mark?.level = level }
         mic.onFinished = { [weak self] in self?.gotIt() }
@@ -497,6 +520,7 @@ final class NotchPanelController {
         model.onType = { [weak self] in self?.typing() }
         model.onSubmit = { [weak self] text in self?.submit(text) }
         model.onAnswer = { [weak self] yes in self?.answer(yes) }
+        model.onUndo = { [weak self] in self?.undoPlan() }
     }
 
     // MARK: The shortcut: tap to open and close, hold to talk
@@ -596,6 +620,7 @@ final class NotchPanelController {
         if pendingApproval != nil { answer(false) }
         switch model.reply {
         case .understood, .result, .approval: setReply(nil)
+        case .plan(let card) where card.phase != .running: setReply(nil)
         default: break
         }
     }
@@ -690,7 +715,7 @@ final class NotchPanelController {
     // MARK: Jobs
 
     /// Every tool Nilo can run. Sends and deletes ask the person in the panel.
-    private func makeRunner() -> JobRunner {
+    private func makeRunner(approver: (any Approver)? = nil) -> JobRunner {
         var registry = ToolRegistry()
         try? registry.register(FreeTimeTool(store: calendar))
         try? registry.register(FindEventsTool(store: calendar))
@@ -699,8 +724,135 @@ final class NotchPanelController {
         try? registry.register(FindPersonTool(store: contacts))
         try? registry.register(MessagesComposeTool(opener: AppMessageOpener()))
         try? registry.register(WhatsAppComposeTool(opener: AppMessageOpener()))
-        let approver = PanelApprover { [weak self] step in await self?.ask(step) ?? false }
-        return JobRunner(registry: registry, approver: approver, context: ToolContext(platform: .macOS))
+        let asker = PanelApprover { [weak self] step in await self?.ask(step) ?? false }
+        return JobRunner(registry: registry, approver: approver ?? asker, context: ToolContext(platform: .macOS))
+    }
+
+    // MARK: The plan card
+
+    /// Shows every step, waits for Do it, then runs them with progress. Nothing runs before the
+    /// yes. Sends run only if they match the card exactly; anything changed is asked again.
+    private func runPlan(title: String, calls: [ToolCall]) async {
+        let check = await makeRunner().preview(calls)
+        guard !Task.isCancelled else { return }
+        guard case .ready(let steps) = check else {
+            if case .refused(let error) = check { finishJob(reply(for: .refused(error)), done: false) }
+            return
+        }
+        planCard = PlanCard(title: title, steps: steps)
+        showPlan()
+        mark.set(.needsYou)
+        let yes = await withCheckedContinuation { pendingApproval = $0 }
+        guard yes, !Task.isCancelled else {
+            planCard?.phase = .stopped("Cancelled. Nothing ran.")
+            showPlan()
+            mark.set(.idle)
+            return
+        }
+
+        planCard?.phase = .running
+        showPlan()
+        mark.set(.working)
+        let asker = PanelApprover { [weak self] step in await self?.ask(step) ?? false }
+        let runner = makeRunner(approver: PlanApprover(approved: steps, fallback: asker))
+        planRunner = runner
+        let result = await runner.run(calls) { event in
+            Task { @MainActor [weak self] in self?.planEvent(event) }
+        }
+        await Task.yield()  // let the last progress land first
+
+        planCard?.canUndo = result.canUndo
+        switch result.outcome {
+        case .completed:
+            guard var card = planCard else { return }
+            card.phase = .finished(card.doneText)
+            planCard = card
+            finishJob(.plan(card), done: true)
+        case .declined(let id):
+            planCard?.set(id, .skipped)
+            planCard?.skipRest()
+            planCard?.phase = .stopped("Stopped. Nothing after that ran.")
+            showPlan()
+            mark.set(.idle)
+        case .failed(let id, let error):
+            planCard?.set(id, .failed(Self.words(error)))
+            planCard?.skipRest()
+            planCard?.phase = .stopped("That didn't work.")
+            showPlan()
+            mark.set(.idle)
+        case .refused(let error):
+            finishJob(reply(for: .refused(error)), done: false)
+        }
+    }
+
+    private func planEvent(_ event: RunEvent) {
+        switch event {
+        case .started(let step): planCard?.set(step.id, .working)
+        case .finished(let id): planCard?.set(id, .done)
+        case .declined(let id): planCard?.set(id, .skipped)
+        case .failed(let id, let error): planCard?.set(id, .failed(Self.words(error)))
+        case .waitingForApproval: break
+        }
+        // Only redraw while the card is what's showing (a changed send may be asked on its own).
+        if case .plan = model.reply { showPlan() }
+    }
+
+    private func showPlan() {
+        guard let planCard else { return }
+        setReply(.plan(planCard))
+    }
+
+    /// Undo: takes back the plan's changes, newest first.
+    private func undoPlan() {
+        guard let runner = planRunner, planCard?.canUndo == true else { return }
+        planRunner = nil
+        planCard?.canUndo = false
+        mark.set(.working)
+        demo = Task { @MainActor [weak self] in
+            let failures = await runner.undoAll()
+            guard let self else { return }
+            self.planCard?.phase = .undone(failures.isEmpty ? "Undone." : "Couldn't undo everything.")
+            self.showPlan()
+            self.mark.set(.idle)
+        }
+    }
+
+    private static func words(_ error: ToolRunError) -> String {
+        switch error {
+        case .noAccess(let what): "Nilo can't see your \(what)."
+        case .notAllowed(_, let reason): reason
+        case .failed(_, let message): message
+        default: "That didn't work."
+        }
+    }
+
+    /// Hidden test (Command-P): a real two-step plan. Add "Nilo test" in the first free 30
+    /// minutes tomorrow, then message yourself about it.
+    private func runTestPlan() {
+        stopListening()
+        model.draft = ""
+        mark.set(.working)
+        demo = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let cal = Calendar.current
+            let tomorrow = cal.startOfDay(for: cal.date(byAdding: .day, value: 1, to: .now) ?? .now)
+            let dayAfter = cal.date(byAdding: .day, value: 1, to: tomorrow) ?? tomorrow
+            let find = await self.makeRunner().run([Self.call("free", FreeTimeTool.name, FreeTimeTool.Input(from: tomorrow, to: dayAfter, minutes: 30))])
+            guard !Task.isCancelled else { return }
+            guard find.outcome == .completed, let data = find.outputs["free"],
+                  let slot = (try? ToolJSON.decoder.decode(FreeTimeTool.Output.self, from: data))?.slots.first else {
+                return self.finishJob(find.outcome == .completed ? .result("No free 30 minutes tomorrow.") : self.reply(for: find.outcome), done: false)
+            }
+            guard let me = try? await self.contacts.me(), let address = me.phones.first ?? me.emails.first else {
+                return self.finishJob(.result("Set your own card in Contacts first: Card, Make This My Card."), done: false)
+            }
+            let end = slot.start.addingTimeInterval(30 * 60)
+            let text = "Hello from Nilo. I added Nilo test, \(WhenText.range(slot.start, end))."
+            await self.runPlan(title: "Test plan", calls: [
+                Self.call("add", AddEventTool.name, EventDraft(title: "Nilo test", start: slot.start, end: end)),
+                Self.call("tell", MessagesComposeTool.name, MessagesComposeTool.Input(recipients: [Recipient(name: me.name, address: address)], text: text)),
+            ])
+        }
     }
 
     // MARK: Approval
@@ -729,7 +881,6 @@ final class NotchPanelController {
         stopListening()
         model.draft = ""
         mark.set(.working)
-        let runner = makeRunner()
         demo = Task { @MainActor [weak self] in
             guard let self else { return }
             let me: Person?
@@ -749,13 +900,7 @@ final class NotchPanelController {
             let call = whatsApp
                 ? Self.call("send", WhatsAppComposeTool.name, WhatsAppComposeTool.Input(recipient: who, text: text))
                 : Self.call("send", MessagesComposeTool.name, MessagesComposeTool.Input(recipients: [who], text: text))
-            let result = await runner.run([call])
-            guard !Task.isCancelled else { return }
-            if result.outcome == .completed {
-                self.finishJob(.result(whatsApp ? "WhatsApp is open. Tap Send there." : "Messages is open. Tap Send there."), done: true)
-            } else {
-                self.finishJob(self.reply(for: result.outcome), done: false)
-            }
+            await self.runPlan(title: "Message yourself", calls: [call])
         }
     }
 
@@ -945,7 +1090,7 @@ final class NotchPanelController {
     /// Esc closes (or says no to a waiting approval; Return says yes). Every other key goes to the
     /// text field, except the hidden test keys: Tab next state, Shift-Tab previous, Command-R
     /// play again, Command-T calendar test job, Command-Shift-T undo it, Command-M message
-    /// yourself in Messages, Command-Shift-M in WhatsApp.
+    /// yourself in Messages, Command-Shift-M in WhatsApp, Command-P a two-step test plan.
     private func handleKey(code: UInt16, chars: String?, shift: Bool, command: Bool) -> Bool {
         switch code {
         case 53:                                  // Esc: no to a waiting approval, else close
@@ -962,6 +1107,7 @@ final class NotchPanelController {
             case "r": mark.replayNow()
             case "t": shift ? undoCalendarTest() : runCalendarTest()
             case "m": runMessageTest(whatsApp: shift)
+            case "p": runTestPlan()
             default: return false
             }
         }
@@ -1022,7 +1168,7 @@ enum ApprovalLayout {
         return max(NotchGeometry.replyHeight, lines + 12)
     }
 
-    static func measure(_ text: String, _ style: NSFont.TextStyle) -> CGFloat {
+    static func measure(_ text: String, _ style: NSFont.TextStyle, width: CGFloat = width) -> CGFloat {
         let font = NSFont.preferredFont(forTextStyle: style)
         let rect = (text as NSString).boundingRect(
             with: NSSize(width: width, height: .greatestFiniteMagnitude),

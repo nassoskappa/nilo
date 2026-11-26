@@ -139,6 +139,32 @@ public struct StepPreview: Sendable, Equatable {
     }
 }
 
+// MARK: - Plans
+
+/// What a whole plan will do, checked before anything runs.
+public enum PlanCheck: Sendable, Equatable {
+    case ready([StepPreview])
+    case refused(ToolRunError)
+}
+
+/// Approves the steps the person saw on the plan card, and only those. A send or delete whose
+/// preview differs in any way from what was shown (one word, one recipient) is not covered:
+/// it goes to `fallback`, which asks again.
+public struct PlanApprover: Approver {
+    private let approved: [StepPreview]
+    private let fallback: any Approver
+
+    public init(approved: [StepPreview], fallback: any Approver) {
+        self.approved = approved
+        self.fallback = fallback
+    }
+
+    public func approve(_ step: StepPreview) async -> Bool {
+        if approved.contains(step) { return true }
+        return await fallback.approve(step)
+    }
+}
+
 // MARK: - Running
 
 public enum RunEvent: Sendable, Equatable {
@@ -186,25 +212,40 @@ public actor JobRunner {
         self.policy = policy
     }
 
-    /// Runs a job's steps in order. `events` reports progress as it happens.
-    public func run(_ calls: [ToolCall], events: @Sendable (RunEvent) -> Void = { _ in }) async -> JobResult {
-        // 1. Check every step before running any.
+    /// Checks every step and gathers what each will do, without running anything. The plan
+    /// card shows this; a bad plan is refused before the person ever sees it.
+    public func preview(_ calls: [ToolCall]) async -> PlanCheck {
+        switch await prepare(calls) {
+        case .success(let steps):
+            return .ready(steps.map { StepPreview(id: $0.call.id, toolName: $0.step.name, risk: $0.step.risk, preview: $0.step.preview) })
+        case .failure(let error):
+            return .refused(error)
+        }
+    }
+
+    private func prepare(_ calls: [ToolCall]) async -> Result<[(call: ToolCall, step: PreparedStep)], ToolRunError> {
         var steps: [(call: ToolCall, step: PreparedStep)] = []
         for call in calls {
-            guard let tool = registry.tool(named: call.toolName) else {
-                return JobResult(outcome: .refused(.unknownTool(call.toolName)), ran: [], canUndo: !undoStack.isEmpty)
-            }
-            guard tool.platforms.contains(context.platform) else {
-                return JobResult(outcome: .refused(.notOnThisPlatform(call.toolName)), ran: [], canUndo: !undoStack.isEmpty)
-            }
+            guard let tool = registry.tool(named: call.toolName) else { return .failure(.unknownTool(call.toolName)) }
+            guard tool.platforms.contains(context.platform) else { return .failure(.notOnThisPlatform(call.toolName)) }
             do {
                 steps.append((call, try await tool.prepare(call.argumentsJSON, context)))
             } catch let error as ToolRunError {
-                return JobResult(outcome: .refused(error), ran: [], canUndo: !undoStack.isEmpty)
+                return .failure(error)
             } catch {
-                let refused = ToolRunError.failed(call.toolName, message: error.localizedDescription)
-                return JobResult(outcome: .refused(refused), ran: [], canUndo: !undoStack.isEmpty)
+                return .failure(.failed(call.toolName, message: error.localizedDescription))
             }
+        }
+        return .success(steps)
+    }
+
+    /// Runs a job's steps in order. `events` reports progress as it happens.
+    public func run(_ calls: [ToolCall], events: @Sendable (RunEvent) -> Void = { _ in }) async -> JobResult {
+        // 1. Check every step before running any.
+        let steps: [(call: ToolCall, step: PreparedStep)]
+        switch await prepare(calls) {
+        case .success(let prepared): steps = prepared
+        case .failure(let error): return JobResult(outcome: .refused(error), ran: [], canUndo: !undoStack.isEmpty)
         }
 
         // 2. Run them, asking where the rules say so.
