@@ -123,6 +123,10 @@ final class NotchPanelModel {
     var geometry: NotchGeometry
     /// What the person is typing.
     var draft = ""
+    /// What the person is saying: settled words, then words still being worked out.
+    var voiceSettled = ""
+    var voicePending = ""
+    var voiceText: String { joinWords(voiceSettled, voicePending) }
     /// Shown under the request. The panel grows to make room.
     var reply: Reply?
 
@@ -133,6 +137,12 @@ final class NotchPanelModel {
         case micOff
         /// No microphone, or it would not start. Typing still works.
         case micMissing
+        /// The speech recognizer is fetching its language files (first use).
+        case voicePreparing
+        /// Speech to text isn't available for the Mac's language.
+        case voiceUnsupported
+        /// "Got it" came with no words.
+        case notHeard
     }
 
     @ObservationIgnored var onType: () -> Void = {}
@@ -186,6 +196,21 @@ struct NotchPanelView: View {
             .accessibilityLabel("Ask Nilo")
     }
 
+    private var showsVoice: Bool { model.draft.isEmpty && !model.voiceText.isEmpty }
+
+    /// Live words: settled in white, words still being worked out in grey. The newest words
+    /// stay in view.
+    private var voiceLine: some View {
+        let settled = model.voiceSettled
+        let pending = model.voicePending
+        let gap = settled.isEmpty || pending.isEmpty || settled.hasSuffix(" ") || pending.hasPrefix(" ") ? "" : " "
+        return Text("\(Text(settled).foregroundStyle(.white))\(Text(gap + pending).foregroundStyle(.white.opacity(0.45)))")
+            .font(.body)
+            .lineLimit(1)
+            .truncationMode(.head)
+            .accessibilityLabel("Heard: \(model.voiceText)")
+    }
+
     @ViewBuilder
     private func replyView(_ reply: NotchPanelModel.Reply) -> some View {
         switch reply {
@@ -218,10 +243,20 @@ struct NotchPanelView: View {
                 .accessibilityHint("Opens Privacy settings for the microphone")
             }
         case .micMissing:
-            Text("No microphone found. You can type.")
-                .font(.callout)
-                .foregroundStyle(.white.opacity(0.55))
+            notice("No microphone found. You can type.")
+        case .voicePreparing:
+            notice("Getting voice ready\u{2026} You can type.")
+        case .voiceUnsupported:
+            notice("Voice isn't available in your language yet. You can type.")
+        case .notHeard:
+            notice("Didn't catch that. Try again, or type.")
         }
+    }
+
+    private func notice(_ text: String) -> some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.white.opacity(0.55))
     }
 
     /// Always laid out at full size. The growing shape reveals it.
@@ -237,7 +272,11 @@ struct NotchPanelView: View {
                         .font(NiloFont.mono(11))
                         .tracking(1)
                         .foregroundStyle(NiloColor.needsYou)
-                    field
+                    ZStack(alignment: .leading) {
+                        // The field stays focused underneath, so typing takes over at once.
+                        field.opacity(showsVoice ? 0 : 1)
+                        if showsVoice { voiceLine }
+                    }
                 }
             }
             .padding(.horizontal, inset)
@@ -289,6 +328,9 @@ final class NotchPanelController {
     private let model: NotchPanelModel
     private let panel = NotchPanel()
     private let mic = Microphone()
+    private let transcriber = Transcriber()
+    /// True while spoken words are being turned into text for this request.
+    private var voiceOn = false
     /// The prototype's stand-in for real work: Thinking, then Done, then Idle.
     private var demo: Task<Void, Never>?
     /// While macOS shows its microphone question, app switches must not close the panel.
@@ -312,6 +354,12 @@ final class NotchPanelController {
 
         mic.onLevel = { [weak mark] level in mark?.level = level }
         mic.onFinished = { [weak self] in self?.gotIt() }
+        mic.sink = transcriber.sink
+        transcriber.onText = { [weak self] settled, pending in
+            guard let self, self.voiceOn else { return }
+            self.model.voiceSettled = settled
+            self.model.voicePending = pending
+        }
         model.onType = { [weak self] in self?.typing() }
         model.onSubmit = { [weak self] text in self?.submit(text) }
     }
@@ -359,11 +407,52 @@ final class NotchPanelController {
             case .unavailable: self.setReply(.micMissing)
             }
         }
+        startVoice(generation: gen)
+    }
+
+    /// Speech to text, alongside the mic. Buffers before it's ready are simply dropped.
+    private func startVoice(generation gen: Int) {
+        model.voiceSettled = ""
+        model.voicePending = ""
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let readiness = await self.transcriber.start { [weak self] progress in
+                guard let self, progress == .downloading, self.model.reply == nil else { return }
+                self.setReply(.voicePreparing)
+            }
+            if self.model.reply == .voicePreparing { self.setReply(nil) }
+            // Closed, typed, or moved on while it got ready: no voice for this request.
+            guard self.generation == gen, self.mark.state == .listening, self.model.draft.isEmpty else {
+                await self.transcriber.cancel()
+                return
+            }
+            switch readiness {
+            case .ready, .downloading:
+                self.voiceOn = true
+            case .unsupported, .failed:
+                if self.model.reply == nil { self.setReply(.voiceUnsupported) }
+            }
+        }
+    }
+
+    /// Stop turning speech into text. `keepWords` moves what was heard into the field.
+    private func stopVoice(keepWords: Bool) {
+        guard voiceOn else { return }
+        voiceOn = false
+        let heard = model.voiceText
+        model.voiceSettled = ""
+        model.voicePending = ""
+        Task { @MainActor [weak self] in await self?.transcriber.cancel() }
+        if keepWords, !heard.isEmpty {
+            model.draft = heard + " " + model.draft
+        }
     }
 
     /// The person is typing: Listening (facing them), mic off, and a new request clears the
     /// last reply.
     private func typing() {
+        // Typing takes over from speaking: the words heard so far move into the field to edit.
+        stopVoice(keepWords: true)
         if mic.isOn { mic.stop() }
         if mark.state != .listening {
             demo?.cancel()
@@ -385,13 +474,24 @@ final class NotchPanelController {
     /// real work.
     private func gotIt(request: String? = nil) {
         guard mark.state == .listening else { return }
+        // Spoken, not typed: the words come from the transcriber once it settles the last ones.
+        let spoken = request == nil && voiceOn
+        voiceOn = false
         mic.stop()
         mark.set(.thinking)
         demo?.cancel()
         demo = Task { @MainActor [weak self] in
+            var heard = request
+            if spoken, let self { heard = await self.transcriber.finish() }
             try? await Task.sleep(for: .seconds(1.5))
             guard let self, !Task.isCancelled, self.mark.state == .thinking else { return }
-            if let request { self.setReply(.echo(request)) }
+            self.model.voiceSettled = ""
+            self.model.voicePending = ""
+            if let heard, !heard.isEmpty {
+                self.setReply(.echo(heard))
+            } else if spoken {
+                self.setReply(.notHeard)
+            }
             self.mark.set(.done)
             try? await Task.sleep(for: .seconds(2.2))
             guard !Task.isCancelled, self.mark.state == .done else { return }
@@ -422,6 +522,7 @@ final class NotchPanelController {
     private func stopListening() {
         demo?.cancel()
         demo = nil
+        stopVoice(keepWords: false)
         mic.stop()
     }
 
@@ -437,6 +538,8 @@ final class NotchPanelController {
         model.geometry = NotchGeometry(screen: screen)
         model.reply = nil
         model.draft = ""
+        model.voiceSettled = ""
+        model.voicePending = ""
         model.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         model.expanded = false
         model.visible = true
@@ -543,4 +646,12 @@ extension NSScreen {
         let point = NSEvent.mouseLocation
         return screens.first { NSMouseInRect(point, $0.frame, false) } ?? main ?? screens[0]
     }
+}
+
+/// Joins two runs of words with one space where needed.
+func joinWords(_ a: String, _ b: String) -> String {
+    if a.isEmpty { return b.trimmingCharacters(in: .whitespaces) }
+    if b.isEmpty { return a.trimmingCharacters(in: .whitespaces) }
+    let gap = a.hasSuffix(" ") || b.hasPrefix(" ") ? "" : " "
+    return (a + gap + b).trimmingCharacters(in: .whitespaces)
 }

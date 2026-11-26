@@ -1,8 +1,8 @@
 import AVFoundation
 import NiloCore
 
-/// Listens to the microphone and reports only how loud it is. Nothing is recorded or kept:
-/// each buffer is measured and thrown away.
+/// Listens to the microphone, reports how loud it is, and hands the sound to the on-device
+/// transcriber through `sink`. Nothing is recorded or kept: each buffer is used and dropped.
 ///
 /// On only while Nilo is listening, so the orange dot in the menu bar means exactly that.
 @MainActor
@@ -19,6 +19,8 @@ final class Microphone {
     var onLevel: ((Double) -> Void)?
     /// Called once when the person has finished speaking.
     var onFinished: (() -> Void)?
+    /// Gets every buffer on the audio thread, for speech to text. Set before `start`.
+    var sink: (@Sendable (AVAudioPCMBuffer) -> Void)?
 
     private var engine: AVAudioEngine?
     private var activity = VoiceActivity()
@@ -54,7 +56,7 @@ final class Microphone {
         guard format.sampleRate > 0, format.channelCount > 0 else { return false }
 
         activity = VoiceActivity()
-        input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.measure { [weak self] rms in
+        input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.measure(sink: sink) { [weak self] rms in
             Task { @MainActor in self?.receive(rms) }
         })
         do {
@@ -74,9 +76,14 @@ final class Microphone {
         if ended { onFinished?() }
     }
 
-    /// Runs on the audio thread, so it is built outside the main actor. Measures one buffer.
-    nonisolated private static func measure(_ deliver: @escaping @Sendable (Float) -> Void) -> AVAudioNodeTapBlock {
+    /// Runs on the audio thread, so it is built outside the main actor. Passes the buffer on,
+    /// then measures it.
+    nonisolated private static func measure(
+        sink: (@Sendable (AVAudioPCMBuffer) -> Void)?,
+        _ deliver: @escaping @Sendable (Float) -> Void
+    ) -> AVAudioNodeTapBlock {
         { buffer, _ in
+            sink?(buffer)
             guard let samples = buffer.floatChannelData?[0] else { return }
             let count = Int(buffer.frameLength)
             guard count > 0 else { return }

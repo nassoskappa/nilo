@@ -36,6 +36,7 @@ targets:
       properties:
         CFBundleDisplayName: Nilo
         LSUIElement: true                # menu bar app, no Dock icon
+        NSSpeechRecognitionUsageDescription: Nilo turns what you say into text on this Mac. Nothing leaves it.
         NSMicrophoneUsageDescription: Nilo listens when you call it, so it can hear what you ask.
     entitlements:
       path: Apps/macOS/Nilo.entitlements
