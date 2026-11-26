@@ -46,13 +46,13 @@ Platforms: macOS 26, iOS 26 and later, Swift 6 with strict concurrency, SwiftUI 
 - **Test calendar.** Until TestFlight, Nilo writes only to a calendar named "Nilo Test", which it creates. It may read all calendars.
 - **Router.** On-device first. Escalate to Claude for multi-step jobs, long documents, writing sent as the user, or low confidence. No key: stay on device and say once what Claude would add. Rules live in one plain table in code.
 - **Tools.** Each action is one `AssistantTool`, defined once in NiloKit and exposed as a Claude tool, a Foundation Models tool and an App Intent. Every job gets App Shortcut phrases starting "Ask Nilo to…".
-- **Approvals.** Providers never run actions. The app runs them through `ApprovalPolicy`. `.read` runs at once, `.change` shows a preview with undo, `.send` and `.delete` always ask and show the exact text, recipients or items. No setting lowers this. `JobRunner` (NiloCore) enforces it: every step is checked before any runs (unknown tool, bad details or wrong device refuses the whole job); every `.change` tool is a `ReversibleTool` or can't be registered; a no stops that step and all after it, earlier changes stay with undo; undo goes newest first. Each tool's `preview` says exactly what it will do, with the full text, recipients or items.
+- **Approvals.** Providers never run actions. The app runs them through `ApprovalPolicy`. `.read` runs at once, `.change` shows a preview with undo, `.send` and `.delete` always ask and show the exact text, recipients or items. No setting lowers this. Until the plan card (2g), the panel asks with a plain prompt: who it's to, the exact text (the area grows to fit; only very long text scrolls), an amber button with `onSignature` text, and Cancel; Return is yes, Esc or closing is no; the ring is Needs you. `JobRunner` (NiloCore) enforces it: every step is checked before any runs (unknown tool, bad details or wrong device refuses the whole job); every `.change` tool is a `ReversibleTool` or can't be registered; a no stops that step and all after it, earlier changes stay with undo; undo goes newest first. Each tool's `preview` says exactly what it will do, with the full text, recipients or items.
 - **Memory.** SwiftData on device, synced with the CloudKit private database. Only the few relevant lines go to Claude. Nothing is learned silently: learned items are proposed and saved only on yes. Every item is visible and deletable in Settings.
 - **Keys and privacy.** The API key lives in the Keychain only, synced with iCloud Keychain. Never log it, never put it in analytics or crash reports. We run no servers in v1.
 
 ## Platform limits (do not try to work around these)
 
-- Messages and WhatsApp can't be sent silently: open the compose sheet or a prefilled link, the user taps Send.
+- Messages and WhatsApp can't be sent silently: open the compose sheet or a prefilled link, the user taps Send. WhatsApp links take one person, so telling several people on WhatsApp is one step each. Numbers need a country code; Nilo never guesses one.
 - EventKit can't invite people. Real invitations go through the Google Calendar API; on iCloud calendars the heads-up message carries the details.
 - Apple Mail has no reading API. Read Gmail via its API and iCloud Mail via IMAP (app-specific password in the Keychain).
 - Messenger and other chat apps: share sheet only.
@@ -99,7 +99,7 @@ The fur on the 3D character is a warmer orange than the amber light, and that's 
 
 **Listening.** Opening the panel means listening: the ring faces you and swells with your voice (Reduce Motion: it brightens instead). The mic is on only while in Listening, so the orange dot means exactly that. Nothing is recorded or kept: loudness is measured and speech becomes text on the Mac (Apple's SpeechAnalyzer), then the sound is dropped. Words appear live in the field, settled in white, still being worked out in grey. About 1.2 s of quiet after speech is "got it": one blink, mic off, Thinking. For now a short Thinking, then Done once, then Idle stands in for real work. "Got it" sends the words heard; no words: "Didn't catch that. Try again, or type." Typing also counts as listening: the first key turns the mic off and moves the words heard so far into the field to edit; Return is "got it". Mic denied: "Microphone is off. You can type." with a Turn on button. Voice tuning lives in `VoiceActivity` (NiloCore).
 
-**Menu bar icon.** Left-click toggles the panel; right-click or Control-click shows Open Nilo (with the shortcut) and Quit. Hidden test keys while the panel is open: Tab next state, Shift-Tab previous, Command-R play again, Command-T calendar test job (adds "Nilo test" in the first free 30 minutes tomorrow), Command-Shift-T undo it (Space and letters type into the field).
+**Menu bar icon.** Left-click toggles the panel; right-click or Control-click shows Open Nilo (with the shortcut) and Quit. Hidden test keys while the panel is open: Tab next state, Shift-Tab previous, Command-R play again, Command-T calendar test job (adds "Nilo test" in the first free 30 minutes tomorrow), Command-Shift-T undo it, Command-M message yourself in Messages (from My Card in Contacts), Command-Shift-M the same in WhatsApp (Space and letters type into the field).
 
 **Menu bar rules.**
 - One colour, tinted by macOS. No amber, no glow. Motion carries the state.
@@ -151,7 +151,7 @@ Short sentences, plain words, lead with the result. "Done. Thursday's clear afte
   - [x] 2b. Ask by voice: on-device speech to text, words appear live, "got it" sends
   - [x] 2c. The tool runner: runs tools through `ApprovalPolicy`, tested with pretend tools
   - [x] 2d. Calendar and contacts tools: free time, add event, move event, find person
-  - [ ] 2e. Messages and WhatsApp tools: compose sheet or prefilled link, the person taps Send
+  - [x] 2e. Messages and WhatsApp tools: compose sheet or prefilled link, the person taps Send
   - [ ] 2f. Understanding requests: the on-device model fills in a job's blanks
   - [ ] 2g. The plan card: the plan before acting, previews, exact text and recipients, approve
   - [ ] 2h. Job 1 end to end, with its "Ask Nilo to…" phrase

@@ -20,9 +20,9 @@ import NiloUI
 struct NotchGeometry: Equatable {
     /// The open panel, including the notch strip at the top.
     static let openSize = CGSize(width: 360, height: 120)
-    /// Extra height under the request when there's a reply or a notice.
+    /// Extra height under the request for a reply or a notice. An approval needs more.
     static let replyHeight: CGFloat = 64
-    static func openHeight(tall: Bool) -> CGFloat { openSize.height + (tall ? replyHeight : 0) }
+    static func openHeight(extra: CGFloat) -> CGFloat { openSize.height + extra }
     /// Extra room in the window so the spring can overshoot without being cut off.
     static let margin = CGSize(width: 24, height: 16)
 
@@ -57,8 +57,8 @@ struct NotchGeometry: Equatable {
         open ? 26 : (hasNotch ? 10 : 16)
     }
 
-    func size(open: Bool, tall: Bool = false) -> CGSize {
-        if open { return CGSize(width: Self.openSize.width, height: Self.openHeight(tall: tall)) }
+    func size(open: Bool, extra: CGFloat = 0) -> CGSize {
+        if open { return CGSize(width: Self.openSize.width, height: Self.openHeight(extra: extra)) }
         // Closed: exactly the notch, plus its shoulders. Without a notch: a small pill.
         return hasNotch
             ? CGSize(width: notch.width + 2 * shoulder(open: false), height: notch.height)
@@ -66,9 +66,9 @@ struct NotchGeometry: Equatable {
     }
 
     /// Where the window sits on the screen, in screen coordinates.
-    func windowFrame(on screen: NSScreen, tall: Bool = false) -> NSRect {
+    func windowFrame(on screen: NSScreen, extra: CGFloat = 0) -> NSRect {
         let width = Self.openSize.width + Self.margin.width
-        let height = Self.openHeight(tall: tall) + Self.margin.height
+        let height = Self.openHeight(extra: extra) + Self.margin.height
         let top = screen.frame.maxY - topInset
         return NSRect(x: screen.frame.midX - width / 2, y: top - height, width: width, height: height)
     }
@@ -148,9 +148,22 @@ final class NotchPanelModel {
         case result(String)
         /// Nilo has no calendar access. Turn on opens Privacy settings.
         case calendarOff
+        /// Nilo has no contacts access. Turn on opens Privacy settings.
+        case contactsOff
+        /// A send or delete waiting for the person: the exact text and everyone it goes to.
+        case approval(StepPreview)
+
+        var height: CGFloat {
+            if case .approval(let step) = self { return ApprovalLayout.height(step.preview) }
+            return NotchGeometry.replyHeight
+        }
     }
 
+    /// Height of the reply area, zero when there's none.
+    var replyHeight: CGFloat { reply?.height ?? 0 }
+
     @ObservationIgnored var onType: () -> Void = {}
+    @ObservationIgnored var onAnswer: (Bool) -> Void = { _ in }
     @ObservationIgnored var onSubmit: (String) -> Void = { _ in }
 
     init(geometry: NotchGeometry) {
@@ -167,7 +180,7 @@ struct NotchPanelView: View {
         let g = model.geometry
         // With Reduce Motion the shape stays full size and the whole panel fades.
         let open = model.expanded || model.reduceMotion
-        let size = g.size(open: open, tall: model.reply != nil)
+        let size = g.size(open: open, extra: model.replyHeight)
         let shape = NotchShape(shoulder: g.shoulder(open: open), bottom: g.bottomRadius(open: open), hasNotch: g.hasNotch)
         let fades = model.reduceMotion || !g.hasNotch
 
@@ -240,6 +253,13 @@ struct NotchPanelView: View {
                 notice("Nilo can't see your calendar.")
                 turnOn("Privacy_Calendars", hint: "Opens Privacy settings for calendars")
             }
+        case .contactsOff:
+            VStack(alignment: .leading, spacing: 2) {
+                notice("Nilo can't see your contacts.")
+                turnOn("Privacy_Contacts", hint: "Opens Privacy settings for contacts")
+            }
+        case .approval(let step):
+            approvalView(step)
         case .result(let text):
             Text(text)
                 .font(.title3)
@@ -253,6 +273,59 @@ struct NotchPanelView: View {
             notice("Voice isn't available in your language yet. You can type.")
         case .notHeard:
             notice("Didn't catch that. Try again, or type.")
+        }
+    }
+
+    /// A plain approval: who it goes to, the exact text, and two buttons. Return is yes, Esc is
+    /// no. Nothing playful here: approvals are for trust. (2g turns this into the plan card.)
+    private func approvalView(_ step: StepPreview) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !step.preview.recipients.isEmpty {
+                Text("To \(step.preview.recipients.joined(separator: ", "))")
+                    .font(.body)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // The whole text, word for word. Only a very long message scrolls.
+            let body = Text(approvalBody(step.preview))
+                .font(.title3)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            if ApprovalLayout.scrolls(step.preview) {
+                ScrollView { body }.frame(height: ApprovalLayout.maxBody)
+            } else {
+                body
+            }
+            HStack(spacing: 16) {
+                Button { model.onAnswer(true) } label: {
+                    // An amber fill always takes the dark label colour (brand rule).
+                    Text(approveLabel(step))
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(NiloColor.onSignature)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(NiloColor.signature, in: .capsule)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Return")
+                Button("Cancel") { model.onAnswer(false) }
+                    .buttonStyle(.plain)
+                    .font(.body)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .accessibilityHint("Escape")
+            }
+        }
+    }
+
+    private func approvalBody(_ preview: ToolPreview) -> String { ApprovalLayout.bodyText(preview) }
+
+    private func approveLabel(_ step: StepPreview) -> String {
+        switch step.toolName {
+        case MessagesComposeTool.name: "Open in Messages"
+        case WhatsAppComposeTool.name: "Open in WhatsApp"
+        default: step.risk == .delete ? "Delete" : "Approve"
         }
     }
 
@@ -306,11 +379,11 @@ struct NotchPanelView: View {
                     .padding(.trailing, inset)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, -8)
-                    .frame(height: NotchGeometry.replyHeight, alignment: .top)
+                    .frame(height: model.replyHeight, alignment: .top)
                     .transition(.opacity)
             }
         }
-        .frame(width: NotchGeometry.openSize.width, height: NotchGeometry.openHeight(tall: model.reply != nil), alignment: .top)
+        .frame(width: NotchGeometry.openSize.width, height: NotchGeometry.openHeight(extra: model.replyHeight), alignment: .top)
         .onAppear { fieldFocused = true }
     }
 }
@@ -351,6 +424,8 @@ final class NotchPanelController {
     private let contacts = ContactsBook()
     /// The runner behind the Command-T test job, kept so Command-Shift-T can undo it.
     private var testRunner: JobRunner?
+    /// A send or delete waiting for the person's answer.
+    private var pendingApproval: CheckedContinuation<Bool, Never>?
     /// True while spoken words are being turned into text for this request.
     private var voiceOn = false
     /// The prototype's stand-in for real work: Thinking, then Done, then Idle.
@@ -384,6 +459,7 @@ final class NotchPanelController {
         }
         model.onType = { [weak self] in self?.typing() }
         model.onSubmit = { [weak self] text in self?.submit(text) }
+        model.onAnswer = { [weak self] yes in self?.answer(yes) }
     }
 
     // MARK: The shortcut: tap to open and close, hold to talk
@@ -480,8 +556,9 @@ final class NotchPanelController {
             demo?.cancel()
             mark.set(.listening)
         }
+        if pendingApproval != nil { answer(false) }
         switch model.reply {
-        case .echo, .result: setReply(nil)
+        case .echo, .result, .approval: setReply(nil)
         default: break
         }
     }
@@ -532,27 +609,26 @@ final class NotchPanelController {
             model.reply = reply
             return
         }
-        let wasTall = model.reply != nil, tall = reply != nil
-        if tall, !wasTall {
-            panel.setFrame(model.geometry.windowFrame(on: screen, tall: true), display: true)
+        let old = model.replyHeight, new = reply?.height ?? 0
+        if new > old {
+            panel.setFrame(model.geometry.windowFrame(on: screen, extra: new), display: true)
         }
         withAnimation(model.reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.35, bounce: 0.15)) {
             model.reply = reply
         }
-        if wasTall, !tall {
+        if new < old {
             let gen = generation
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(0.4))
-                guard let self, self.generation == gen, self.model.reply == nil else { return }
-                self.panel.setFrame(self.model.geometry.windowFrame(on: self.screen, tall: false), display: true)
+                guard let self, self.generation == gen, self.model.visible, self.model.replyHeight == new else { return }
+                self.panel.setFrame(self.model.geometry.windowFrame(on: self.screen, extra: new), display: true)
             }
         }
     }
 
     // MARK: Jobs
 
-    /// Every tool Nilo can run. Send and delete tools come in 2e; until the plan card (2g) can
-    /// ask, nothing is approved.
+    /// Every tool Nilo can run. Sends and deletes ask the person in the panel.
     private func makeRunner() -> JobRunner {
         var registry = ToolRegistry()
         try? registry.register(FreeTimeTool(store: calendar))
@@ -560,7 +636,66 @@ final class NotchPanelController {
         try? registry.register(AddEventTool(store: calendar))
         try? registry.register(MoveEventTool(store: calendar))
         try? registry.register(FindPersonTool(store: contacts))
-        return JobRunner(registry: registry, approver: NothingApprovedYet(), context: ToolContext(platform: .macOS))
+        try? registry.register(MessagesComposeTool(opener: AppMessageOpener()))
+        try? registry.register(WhatsAppComposeTool(opener: AppMessageOpener()))
+        let approver = PanelApprover { [weak self] step in await self?.ask(step) ?? false }
+        return JobRunner(registry: registry, approver: approver, context: ToolContext(platform: .macOS))
+    }
+
+    // MARK: Approval
+
+    /// Shows the exact preview and waits. The ring faces the person (Needs you: one hop, then still).
+    private func ask(_ step: StepPreview) async -> Bool {
+        guard model.visible else { return false }
+        return await withCheckedContinuation { continuation in
+            pendingApproval = continuation
+            setReply(.approval(step))
+            mark.set(.needsYou)
+        }
+    }
+
+    /// The person's answer. Anything other than an explicit yes is a no.
+    private func answer(_ yes: Bool) {
+        guard let continuation = pendingApproval else { return }
+        pendingApproval = nil
+        mark.set(.working)
+        continuation.resume(returning: yes)
+    }
+
+    /// Hidden test (Command-M, Command-Shift-M for WhatsApp): a message to yourself, from your
+    /// own card in Contacts. It asks first, then opens the app with the text filled in.
+    private func runMessageTest(whatsApp: Bool) {
+        stopListening()
+        model.draft = ""
+        mark.set(.working)
+        let runner = makeRunner()
+        demo = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let me: Person?
+            do {
+                me = try await self.contacts.me()
+            } catch {
+                return self.finishJob(self.reply(for: .failed(id: "me", (error as? ToolRunError) ?? .noAccess("contacts"))), done: false)
+            }
+            guard let me else {
+                return self.finishJob(.result("Set your own card in Contacts first: Card, Make This My Card."), done: false)
+            }
+            guard let address = whatsApp ? me.phones.first : (me.phones.first ?? me.emails.first) else {
+                return self.finishJob(.result("Your card in Contacts has no phone number."), done: false)
+            }
+            let who = Recipient(name: me.name, address: address)
+            let text = "Hello from Nilo."
+            let call = whatsApp
+                ? Self.call("send", WhatsAppComposeTool.name, WhatsAppComposeTool.Input(recipient: who, text: text))
+                : Self.call("send", MessagesComposeTool.name, MessagesComposeTool.Input(recipients: [who], text: text))
+            let result = await runner.run([call])
+            guard !Task.isCancelled else { return }
+            if result.outcome == .completed {
+                self.finishJob(.result(whatsApp ? "WhatsApp is open. Tap Send there." : "Messages is open. Tap Send there."), done: true)
+            } else {
+                self.finishJob(self.reply(for: result.outcome), done: false)
+            }
+        }
     }
 
     /// Hidden test (Command-T): find the first free 30 minutes tomorrow and add "Nilo test"
@@ -627,7 +762,7 @@ final class NotchPanelController {
         }
         switch error {
         case .noAccess("calendar"): return .calendarOff
-        case .noAccess: return .result("Nilo can't see your contacts.")
+        case .noAccess: return .contactsOff
         case .notAllowed(_, let reason): return .result(reason)
         case .failed(_, let message): return .result("That didn't work. \(message)")
         default: return .result("That didn't work.")
@@ -680,6 +815,7 @@ final class NotchPanelController {
 
     func close() {
         guard model.expanded else { return }
+        answer(false)  // closing is never a yes
         stopWatching()
         stopListening()
         if mark.state != .idle { mark.set(.idle) }
@@ -745,12 +881,17 @@ final class NotchPanelController {
         observers.removeAll()
     }
 
-    /// Esc closes. Every other key goes to the text field, except the hidden test keys:
-    /// Tab next state, Shift-Tab previous, Command-R play again, Command-T calendar test job,
-    /// Command-Shift-T undo it.
+    /// Esc closes (or says no to a waiting approval; Return says yes). Every other key goes to the
+    /// text field, except the hidden test keys: Tab next state, Shift-Tab previous, Command-R
+    /// play again, Command-T calendar test job, Command-Shift-T undo it, Command-M message
+    /// yourself in Messages, Command-Shift-M in WhatsApp.
     private func handleKey(code: UInt16, chars: String?, shift: Bool, command: Bool) -> Bool {
         switch code {
-        case 53: close()                          // Esc
+        case 53:                                  // Esc: no to a waiting approval, else close
+            if pendingApproval != nil { answer(false) } else { close() }
+        case 36, 76:                              // Return: yes to a waiting approval
+            guard pendingApproval != nil else { return false }
+            answer(true)
         case 48:                                  // Tab
             stopListening()
             mark.step(shift ? -1 : 1)
@@ -759,6 +900,7 @@ final class NotchPanelController {
             switch chars {
             case "r": mark.replayNow()
             case "t": shift ? undoCalendarTest() : runCalendarTest()
+            case "m": runMessageTest(whatsApp: shift)
             default: return false
             }
         }
@@ -782,7 +924,44 @@ func joinWords(_ a: String, _ b: String) -> String {
     return (a + gap + b).trimmingCharacters(in: .whitespaces)
 }
 
-/// Until the plan card (2g) can ask the person, nothing that needs a yes is approved.
-struct NothingApprovedYet: Approver {
-    func approve(_ step: StepPreview) async -> Bool { false }
+/// Asks the person in the panel.
+struct PanelApprover: Approver {
+    let ask: @MainActor @Sendable (StepPreview) async -> Bool
+    func approve(_ step: StepPreview) async -> Bool { await ask(step) }
+}
+
+/// Sizes the approval area to fit everything it must show, measured up front so the window
+/// never has to ask SwiftUI (that path leads to AppKit layout loops).
+enum ApprovalLayout {
+    /// The text column under the request, at its narrowest (on a notch).
+    static let width: CGFloat = NotchGeometry.openSize.width - 2 * 34 - 44 - 14
+    /// Longer messages scroll inside this height.
+    static let maxBody: CGFloat = 160
+
+    static func height(_ preview: ToolPreview) -> CGFloat {
+        let to = preview.recipients.isEmpty ? 0 : measure("To " + preview.recipients.joined(separator: ", "), .body) + 6
+        let body = min(measure(bodyText(preview), .title3), maxBody)
+        let buttons: CGFloat = 28
+        return to + body + 6 + buttons + 14
+    }
+
+    static func scrolls(_ preview: ToolPreview) -> Bool {
+        measure(bodyText(preview), .title3) > maxBody
+    }
+
+    static func bodyText(_ preview: ToolPreview) -> String {
+        if let text = preview.text { return text }
+        if !preview.items.isEmpty { return preview.items.joined(separator: "\n") }
+        return preview.title
+    }
+
+    private static func measure(_ text: String, _ style: NSFont.TextStyle) -> CGFloat {
+        let font = NSFont.preferredFont(forTextStyle: style)
+        let rect = (text as NSString).boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font]
+        )
+        return ceil(rect.height) + 2
+    }
 }

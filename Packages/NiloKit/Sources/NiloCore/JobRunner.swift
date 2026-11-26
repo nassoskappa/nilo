@@ -130,6 +130,13 @@ public struct StepPreview: Sendable, Equatable {
     public let toolName: String
     public let risk: Risk
     public let preview: ToolPreview
+
+    public init(id: String, toolName: String, risk: Risk, preview: ToolPreview) {
+        self.id = id
+        self.toolName = toolName
+        self.risk = risk
+        self.preview = preview
+    }
 }
 
 // MARK: - Running

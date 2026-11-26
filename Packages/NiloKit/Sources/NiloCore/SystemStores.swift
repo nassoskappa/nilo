@@ -125,22 +125,34 @@ public actor ContactsBook: ContactsStore {
         }
     }
 
+    private static var keys: [CNKeyDescriptor] { [
+        CNContactGivenNameKey, CNContactFamilyNameKey, CNContactOrganizationNameKey,
+        CNContactPhoneNumbersKey, CNContactEmailAddressesKey,
+    ] as [CNKeyDescriptor] }
+
     public func people(named name: String) async throws -> [Person] {
         try await access()
-        let keys = [
-            CNContactGivenNameKey, CNContactFamilyNameKey, CNContactOrganizationNameKey,
-            CNContactPhoneNumbersKey, CNContactEmailAddressesKey,
-        ] as [CNKeyDescriptor]
-        let found = try store.unifiedContacts(matching: CNContact.predicateForContacts(matchingName: name), keysToFetch: keys)
-        return found.map { contact in
-            let full = [contact.givenName, contact.familyName].filter { !$0.isEmpty }.joined(separator: " ")
-            return Person(
-                id: contact.identifier,
-                name: full.isEmpty ? contact.organizationName : full,
-                phones: contact.phoneNumbers.map { $0.value.stringValue },
-                emails: contact.emailAddresses.map { $0.value as String }
-            )
-        }
+        let found = try store.unifiedContacts(matching: CNContact.predicateForContacts(matchingName: name), keysToFetch: Self.keys)
+        return found.map(Self.person)
+    }
+
+    public func me() async throws -> Person? {
+        try await access()
+        #if os(macOS)
+        return (try? store.unifiedMeContactWithKeys(toFetch: Self.keys)).map(Self.person)
+        #else
+        return nil
+        #endif
+    }
+
+    private static func person(_ contact: CNContact) -> Person {
+        let full = [contact.givenName, contact.familyName].filter { !$0.isEmpty }.joined(separator: " ")
+        return Person(
+            id: contact.identifier,
+            name: full.isEmpty ? contact.organizationName : full,
+            phones: contact.phoneNumbers.map { $0.value.stringValue },
+            emails: contact.emailAddresses.map { $0.value as String }
+        )
     }
 }
 #endif

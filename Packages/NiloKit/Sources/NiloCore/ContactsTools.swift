@@ -19,6 +19,12 @@ public struct Person: Codable, Sendable, Equatable, Identifiable {
 /// Where contacts come from. The Contacts framework in the apps, a pretend book in tests.
 public protocol ContactsStore: Sendable {
     func people(named name: String) async throws -> [Person]
+    /// The person's own card ("My Card"), if they've set one.
+    func me() async throws -> Person?
+}
+
+public extension ContactsStore {
+    func me() async throws -> Person? { nil }
 }
 
 public struct FindPersonTool: AssistantTool {
