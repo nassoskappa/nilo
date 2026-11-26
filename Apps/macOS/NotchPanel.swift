@@ -132,8 +132,11 @@ final class NotchPanelModel {
     var reply: Reply?
 
     enum Reply: Equatable {
-        /// What Nilo understood. Until it can act (Phase 2 steps to come), it says so.
-        case echo(String)
+        /// The job Nilo understood, in plain words: a headline and a few detail lines.
+        /// (Acting on it comes with the plan card and the jobs.)
+        case understood(String, [String])
+        /// Nilo can't understand requests without Apple Intelligence.
+        case modelOff(ReaderAvailability)
         /// The person said no to the microphone. Typing still works.
         case micOff
         /// No microphone, or it would not start. Typing still works.
@@ -154,8 +157,11 @@ final class NotchPanelModel {
         case approval(StepPreview)
 
         var height: CGFloat {
-            if case .approval(let step) = self { return ApprovalLayout.height(step.preview) }
-            return NotchGeometry.replyHeight
+            switch self {
+            case .approval(let step): return ApprovalLayout.height(step.preview)
+            case .understood(let headline, let details): return ApprovalLayout.height(headline: headline, details: details)
+            default: return NotchGeometry.replyHeight
+            }
         }
     }
 
@@ -232,16 +238,31 @@ struct NotchPanelView: View {
     @ViewBuilder
     private func replyView(_ reply: NotchPanelModel.Reply) -> some View {
         switch reply {
-        case .echo(let request):
+        case .understood(let headline, let details):
             VStack(alignment: .leading, spacing: 2) {
-                Text("\u{201C}\(request)\u{201D}")
+                Text(headline)
                     .font(.title3)
                     .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text("Got it. Nilo can't act on this yet.")
-                    .font(.body)
-                    .foregroundStyle(.white.opacity(0.55))
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(details, id: \.self) { line in
+                    Text(line)
+                        .font(.body)
+                        .foregroundStyle(.white.opacity(0.6))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        case .modelOff(let availability):
+            switch availability {
+            case .turnedOff:
+                VStack(alignment: .leading, spacing: 2) {
+                    notice("Turn on Apple Intelligence so Nilo can understand you.")
+                    turnOnPane("com.apple.Siri-Settings.extension", hint: "Opens Apple Intelligence settings")
+                }
+            case .notReady:
+                notice("Apple Intelligence is still getting ready. Try again in a few minutes.")
+            case .unsupported, .ready:
+                notice("Nilo needs Apple Intelligence, which this Mac doesn't have.")
             }
         case .micOff:
             VStack(alignment: .leading, spacing: 2) {
@@ -327,6 +348,20 @@ struct NotchPanelView: View {
         case WhatsAppComposeTool.name: "Open in WhatsApp"
         default: step.risk == .delete ? "Delete" : "Approve"
         }
+    }
+
+    /// Opens a System Settings pane by its id.
+    private func turnOnPane(_ pane: String, hint: String) -> some View {
+        Button("Turn on") {
+            if let url = URL(string: "x-apple.systempreferences:\(pane)") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        .buttonStyle(.plain)
+        .font(.body.weight(.medium))
+        .foregroundStyle(NiloColor.signature)
+        .fixedSize()
+        .accessibilityHint(hint)
     }
 
     /// Opens the right page of Privacy & Security settings.
@@ -422,6 +457,8 @@ final class NotchPanelController {
     /// The real calendars and contacts. Asks for access the first time a tool needs it.
     private let calendar = EventKitCalendar()
     private let contacts = ContactsBook()
+    /// Reads requests into a job's blanks: Apple's on-device model.
+    private let reader = OnDeviceReader()
     /// The runner behind the Command-T test job, kept so Command-Shift-T can undo it.
     private var testRunner: JobRunner?
     /// A send or delete waiting for the person's answer.
@@ -558,7 +595,7 @@ final class NotchPanelController {
         }
         if pendingApproval != nil { answer(false) }
         switch model.reply {
-        case .echo, .result, .approval: setReply(nil)
+        case .understood, .result, .approval: setReply(nil)
         default: break
         }
     }
@@ -585,19 +622,43 @@ final class NotchPanelController {
         demo = Task { @MainActor [weak self] in
             var heard = request
             if spoken, let self { heard = await self.transcriber.finish() }
-            try? await Task.sleep(for: .seconds(1.5))
             guard let self, !Task.isCancelled, self.mark.state == .thinking else { return }
+            guard let heard, !heard.isEmpty else {
+                self.model.voiceSettled = ""
+                self.model.voicePending = ""
+                if spoken { self.setReply(.notHeard) }
+                self.mark.set(.idle)
+                return
+            }
+            let understood = await self.understand(heard)
+            guard !Task.isCancelled, self.mark.state == .thinking else { return }
             self.model.voiceSettled = ""
             self.model.voicePending = ""
-            if let heard, !heard.isEmpty {
-                self.setReply(.echo(heard))
-            } else if spoken {
-                self.setReply(.notHeard)
+            guard let understood else { return }  // a notice is already showing
+            let (headline, details) = JobText.lines(understood)
+            switch understood {
+            case .addMeeting, .moveMeeting:
+                self.finishJob(.understood(headline, details), done: true)
+            case .question, .notAJob:
+                self.finishJob(.understood(headline, []), done: false)
             }
-            self.mark.set(.done)
-            try? await Task.sleep(for: .seconds(2.2))
-            guard !Task.isCancelled, self.mark.state == .done else { return }
-            self.mark.set(.idle)
+        }
+    }
+
+    /// Reads the request with the on-device model, then works out the dates in code.
+    /// Nil when the model can't be used or fails (a notice says why).
+    private func understand(_ request: String) async -> Understood? {
+        let availability = OnDeviceReader.availability
+        guard availability == .ready else {
+            finishJob(.modelOff(availability), done: false)
+            return nil
+        }
+        do {
+            let form = try await reader.read(request)
+            return Understand.job(from: form, request: request, now: .now)
+        } catch {
+            finishJob(.result("That didn't work. Try again, or say it another way."), done: false)
+            return nil
         }
     }
 
@@ -955,7 +1016,13 @@ enum ApprovalLayout {
         return preview.title
     }
 
-    private static func measure(_ text: String, _ style: NSFont.TextStyle) -> CGFloat {
+    /// An understood job: the headline, then each detail line.
+    static func height(headline: String, details: [String]) -> CGFloat {
+        let lines = measure(headline, .title3) + details.reduce(0) { $0 + measure($1, .body) + 2 }
+        return max(NotchGeometry.replyHeight, lines + 12)
+    }
+
+    static func measure(_ text: String, _ style: NSFont.TextStyle) -> CGFloat {
         let font = NSFont.preferredFont(forTextStyle: style)
         let rect = (text as NSString).boundingRect(
             with: NSSize(width: width, height: .greatestFiniteMagnitude),
