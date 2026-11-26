@@ -14,7 +14,40 @@ public protocol AssistantTool: Sendable {
     static var risk: Risk { get }
     static var platforms: Set<Platform> { get }
 
+    /// Exactly what running it would do, in words the person approves. For `.send` this
+    /// carries the exact text and every recipient; for `.delete`, every item that goes.
+    /// Must not change anything.
+    func preview(_ input: Input, in context: ToolContext) async throws -> ToolPreview
+
     func run(_ input: Input, in context: ToolContext) async throws -> Output
+}
+
+/// A tool whose effect can be taken back. Every `.change` tool must be one: the runner
+/// refuses to register a change it can't undo.
+public protocol ReversibleTool: AssistantTool {
+    func undo(_ input: Input, output: Output, in context: ToolContext) async throws
+}
+
+/// What the person sees before (or, for changes, while) a step runs.
+public struct ToolPreview: Sendable, Equatable, Codable {
+    /// One line, result first. "Add Design review, Thursday 3 to 4 pm".
+    public var title: String
+    /// Extra lines, if any.
+    public var details: [String]
+    /// Everyone who will receive something. Never shortened.
+    public var recipients: [String]
+    /// The exact text that will be sent, word for word.
+    public var text: String?
+    /// Every item that will be deleted. Never shortened.
+    public var items: [String]
+
+    public init(title: String, details: [String] = [], recipients: [String] = [], text: String? = nil, items: [String] = []) {
+        self.title = title
+        self.details = details
+        self.recipients = recipients
+        self.text = text
+        self.items = items
+    }
 }
 
 /// The approval engine reads this. No setting can lower it.
