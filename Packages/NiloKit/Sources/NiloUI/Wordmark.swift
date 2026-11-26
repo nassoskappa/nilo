@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// `nilo` plus the mark. On black use `.signature`; on white use `.onLight`.
+/// `nilo` plus the mark. On black use `.signature`; on white use `.onLight` (amber mark,
+/// letters in the system label colour, since amber is never text on light).
 public struct Wordmark: View {
     public enum Rendering { case signature, onLight, monochrome }
 
@@ -30,8 +31,8 @@ public struct Wordmark: View {
 
     private var textColor: Color {
         switch rendering {
-        case .signature: Color(hex: 0xEDEBE4)
-        case .onLight: Color(hex: 0x141412)
+        case .signature: NiloColor.paper
+        case .onLight: Color.primary
         case .monochrome: .white
         }
     }
@@ -39,7 +40,7 @@ public struct Wordmark: View {
     private var markColor: Color {
         switch rendering {
         case .signature: NiloColor.signature
-        case .onLight: NiloColor.deep
+        case .onLight: NiloColor.signature
         case .monochrome: .white
         }
     }

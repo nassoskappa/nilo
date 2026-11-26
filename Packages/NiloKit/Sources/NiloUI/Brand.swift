@@ -1,18 +1,25 @@
 import SwiftUI
 
-/// Nilo's colours. Rule: bright cyan only ever touches black.
-/// On light or glass surfaces, use `capsule` behind the mark, or `deep` for text and buttons.
+/// Nilo's colours. One amber on every background, dark or light. No dark or desaturated variant.
+///
+/// Rules:
+/// - Amber is a shape or a surface. On black, amber marks, glow and text are all fine.
+/// - On a light background amber is never text. There it is a fill with `onSignature` text on
+///   top (about 11:1); links and small text use the system label colours.
+/// - Any button with an amber fill uses `onSignature` for its label. SwiftUI's default white
+///   text on amber is unreadable.
+/// - Where Apple sets the tint (menu bar, tinted icons, Lock Screen widgets) the mark is monochrome.
+/// - Never draw an amber or orange dot: macOS uses one to say a microphone is on. Nilo only
+///   draws its own shapes, the bar and the ring.
 public enum NiloColor {
-    /// Signature. Only on black.
-    public static let signature = Color(hex: 0x4EF2E5)
-    /// "Needs you": brighter tint. Only on black.
-    public static let needsYou = Color(hex: 0xA6FAF3)
-    /// Light mode buttons, links, the mark on white. 4.8:1 on white.
-    public static let deep = Color(hex: 0x00807A)
-    /// Text on a signature-coloured button.
-    public static let onSignature = Color(hex: 0x041413)
-    /// The capsule that carries its own black on glass and light surfaces.
-    public static let capsule = Color(hex: 0x0B0B0A)
+    /// Signature amber.
+    public static let signature = Color(hex: 0xFFB000)
+    /// "Needs you": a lighter amber.
+    public static let needsYou = Color(hex: 0xFFD27A)
+    /// Text on an amber fill.
+    public static let onSignature = Color(hex: 0x1A1000)
+    /// Warm off-white for the wordmark's letters on black.
+    public static let paper = Color(hex: 0xEDEBE4)
 }
 
 public extension Color {

@@ -24,6 +24,7 @@ targets:
   Nilo-macOS:
     type: application
     platform: macOS
+    scheme: {}                       # a shared scheme, so it builds from the command line
     sources: [Apps/macOS]
     dependencies:
       - package: NiloKit
@@ -49,6 +50,7 @@ targets:
   Nilo-iOS:
     type: application
     platform: iOS
+    scheme: {}                       # a shared scheme, so it builds from the command line
     sources: [Apps/iOS]
     dependencies:
       - package: NiloKit

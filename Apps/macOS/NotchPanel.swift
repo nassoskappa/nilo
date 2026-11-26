@@ -214,6 +214,7 @@ struct NotchPanelView: View {
                 .buttonStyle(.plain)
                 .font(.callout.weight(.medium))
                 .foregroundStyle(NiloColor.signature)
+                .fixedSize()
                 .accessibilityHint("Opens Privacy settings for the microphone")
             }
         case .micMissing:

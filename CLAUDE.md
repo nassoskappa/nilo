@@ -60,7 +60,13 @@ Platforms: macOS 26, iOS 26 and later, Swift 6 with strict concurrency, SwiftUI 
 
 ## Brand rules
 
-- **Colour.** Signature cyan `#4EF2E5`, "needs you" tint `#A6FAF3`, light mode `#00807A`, text on cyan `#041413`. Bright cyan only ever touches black. On glass or light surfaces the mark sits in a black capsule; buttons and links use `#00807A`. Where Apple sets the tint (menu bar, tinted icons, Lock Screen widgets) the mark is monochrome. Use `NiloColor`, never raw hex in views.
+- **Colour.**
+  - Signature amber `#FFB000`, needs-you tint `#FFD27A`, text on amber `#1A1000`. One amber on every background, dark or light. No dark or desaturated variant.
+  - Amber is a shape or a surface. On a light background it is never text: there it becomes a fill with `#1A1000` text on top (about 11:1), and links and small text use the system label colours.
+  - On black, amber marks, glow and text are all fine.
+  - Where Apple sets the tint (menu bar, tinted icons, Lock Screen widgets) the mark stays monochrome, as now.
+  - Never draw an amber or orange dot. macOS uses an orange dot to say a microphone is on. Nilo only ever shows its own shapes: the bar and the ring.
+  - Use `NiloColor`, never raw hex in views.
 - **The mark.** A small cursor bar with seven states: idle, listening, thinking, working, needs you, done, noted. Motion carries the state; colour never changes hue. Use `MarkView`.
 - **The character.** See "Character and motion" below. The mark is a ring of light: side-on it reads as the cursor, face-on it is a ring.
 - **Type.** SF Pro for everything people read, approve or tap, with Dynamic Type. SF Mono (`NiloFont.mono`) only for state labels, counters, timestamps and the wordmark.
@@ -70,6 +76,8 @@ Platforms: macOS 26, iOS 26 and later, Swift 6 with strict concurrency, SwiftUI 
 ## Character and motion
 
 The mark is a torus (a ring of light). Side-on, it looks like the cursor. Face-on, it is a ring. The design canvas board "Face" shows the reference motion.
+
+The fur on the 3D character is a warmer orange than the amber light, and that's intended. The UI uses amber only.
 
 **The rule.** Side-on means Nilo faces the task. Face-on means Nilo faces you. Nilo turns only when attention moves between the person and the work.
 
@@ -94,7 +102,7 @@ The mark is a torus (a ring of light). Side-on, it looks like the cursor. Face-o
 **Menu bar icon.** Left-click toggles the panel; right-click or Control-click shows Open Nilo (with the shortcut) and Quit. Hidden test keys while the panel is open: Tab next state, Shift-Tab previous, Command-R play again (Space and letters type into the field).
 
 **Menu bar rules.**
-- One colour, tinted by macOS. No cyan, no glow. Motion carries the state.
+- One colour, tinted by macOS. No amber, no glow. Motion carries the state.
 - Idle is completely still. Nothing redraws.
 - Working, thinking and listening move all the time. Needs you hops once and holds still. Done plays turn, dim, one lap, flare, turn back once, then rests as a bar (the lap is drawn at full opacity over the dimmed ring; the flare is only the 6 % size bump, since a template icon can't get brighter). Noted is one glance.
 - Loops move 1.5 times as far as in the panel, because the icon is only 18 pt.

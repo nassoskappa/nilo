@@ -7,7 +7,7 @@ import NiloUI
 /// The icon is the same character as the panel, drawn from the same motion (`MarkMotion`), so
 /// the two always agree. It is a template image: macOS tints it black or white to match the
 /// menu bar (brand rule: where Apple sets the tint, the mark is monochrome). So there is no
-/// cyan and no glow here. Motion carries the state.
+/// amber and no glow here. Motion carries the state.
 ///
 /// Rules (see "Character and motion" in CLAUDE.md):
 /// - Idle is completely still.
